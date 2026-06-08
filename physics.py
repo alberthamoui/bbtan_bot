@@ -200,25 +200,6 @@ def _get_triangle_diagonal_normal(orientation: TriangleOrientation) -> Vec2:
     return normals.get(orientation, Vec2(0, -1))
 
 
-def _point_in_triangle(px: float, py: float, vertices: np.ndarray) -> bool:
-    """Checa se ponto está dentro do triângulo usando cross products."""
-    if len(vertices) < 3:
-        return False
-
-    def sign(p1, p2, p3):
-        return (p1[0] - p3[0]) * (p2[1] - p3[1]) - (p2[0] - p3[0]) * (p1[1] - p3[1])
-
-    v = vertices
-    d1 = sign((px, py), v[0], v[1])
-    d2 = sign((px, py), v[1], v[2])
-    d3 = sign((px, py), v[2], v[0])
-
-    has_neg = (d1 < 0) or (d2 < 0) or (d3 < 0)
-    has_pos = (d1 > 0) or (d2 > 0) or (d3 > 0)
-
-    return not (has_neg and has_pos)
-
-
 def _collide_triangle(
     pos: Vec2, vel: Vec2, radius: float, block: Block
 ) -> Optional[Vec2]:
@@ -288,43 +269,14 @@ def _apply_laser(
             continue
 
         block_hp[id(block)] -= ball_count
-        score += cfg.SCORE_HIT_BLOCK * ball_count
-
-        if block.cy >= cfg.DANGER_ZONE_Y:
-            danger_ratio = (block.cy - cfg.DANGER_ZONE_Y) / max(
-                1, cfg.WALL_BOTTOM - cfg.DANGER_ZONE_Y
-            )
-            score += cfg.SCORE_DANGER_HIT * (1 + danger_ratio * 3)
+        row_mult = cfg.ROW_MULTIPLIERS.get(block.row_index, 1.0)
+        score += cfg.SCORE_HIT_BLOCK * ball_count * row_mult
 
         if block_hp[id(block)] <= 0:
             destroyed += 1
-            score += cfg.SCORE_DESTROY_BLOCK
-            if block.cy >= cfg.DANGER_ZONE_Y:
-                danger_ratio = (block.cy - cfg.DANGER_ZONE_Y) / max(
-                    1, cfg.WALL_BOTTOM - cfg.DANGER_ZONE_Y
-                )
-                score += cfg.SCORE_DANGER_DESTROY * (1 + danger_ratio * 2)
+            score += cfg.SCORE_DESTROY_BLOCK * row_mult
 
     return score, destroyed
-
-
-# ─────────────────────────────────────────────
-# MULTIPLICADOR DE PRIORIDADE POR FILEIRA
-# ─────────────────────────────────────────────
-
-
-def get_row_multiplier(block_y: float) -> float:
-    """Retorna o multiplicador de pontuação com base na fileira do bloco (cfg.LEVELS)."""
-    # Abaixo do último nível = jogo perdido se não destruir
-    if block_y >= cfg.LEVELS[0]:
-        return 30.0
-    for idx, row_y in enumerate(cfg.LEVELS):
-        if abs(block_y - row_y) < 25:
-            return cfg.ROW_MULTIPLIERS.get(idx, 1.0)
-    # Fallback interpolado por posição
-    if block_y > cfg.LEVELS[1]: return 5.0
-    if block_y > cfg.LEVELS[3]: return 1.5
-    return 1.0
 
 
 # ─────────────────────────────────────────────
@@ -442,20 +394,9 @@ def simulate_trajectory(
                 damage = ball_count
                 block_hp[id(block)] -= damage
                 total_hits += 1
-                score += cfg.SCORE_HIT_BLOCK * ball_count
 
-                # ── Bônus zona de perigo ──
-                # Blocos mais pra baixo ganham prioridade crescente
-                if block.cy >= cfg.DANGER_ZONE_Y:
-                    # Quanto mais embaixo, maior o bônus (0.0 a 1.0)
-                    danger_ratio = (block.cy - cfg.DANGER_ZONE_Y) / max(
-                        1, cfg.WALL_BOTTOM - cfg.DANGER_ZONE_Y
-                    )
-                    score += cfg.SCORE_DANGER_HIT * (1 + danger_ratio * 3)
-
-                    # Última fileira: quase game over
-                    if block.cy >= cfg.WALL_BOTTOM - cfg.BLOCK_SIZE:
-                        score += cfg.SCORE_CRITICAL_ROW
+                row_mult = cfg.ROW_MULTIPLIERS.get(block.row_index, 1.0)
+                score += cfg.SCORE_HIT_BLOCK * ball_count * row_mult
 
                 # Multi-bounce bonus
                 bid = id(block)
@@ -470,14 +411,7 @@ def simulate_trajectory(
                 # Bloco destruído?
                 if block_hp[id(block)] <= 0:
                     blocks_destroyed += 1
-                    score += cfg.SCORE_DESTROY_BLOCK
-
-                    # Bônus extra por destruir bloco em perigo
-                    if block.cy >= cfg.DANGER_ZONE_Y:
-                        danger_ratio = (block.cy - cfg.DANGER_ZONE_Y) / max(
-                            1, cfg.WALL_BOTTOM - cfg.DANGER_ZONE_Y
-                        )
-                        score += cfg.SCORE_DANGER_DESTROY * (1 + danger_ratio * 2)
+                    score += cfg.SCORE_DESTROY_BLOCK * row_mult
 
                 break  # só processa uma colisão com bloco por step
 

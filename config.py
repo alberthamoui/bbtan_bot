@@ -133,19 +133,17 @@ ROW_MULTIPLIERS = {
     0: 15.0,  # CRÍTICO: Fileira colada no chão (Y≈480)
     1: 5.0,   # ALTO: Segunda fileira (Y≈417)
     2: 2.5,   # MÉDIO: Terceira fileira (Y≈352)
-    3: 1.5,   # NORMAL: Quarta fileira (Y=529)
-    4: 1.0,   # PADRÃO: Quinta fileira (Y=468)
-    5: 0.8,   # BAIXO: Sexta fileira (Y=406)
-    6: 0.5    # DESPREZÍVEL: Fileira lá no teto (Y=341)
+    3: 1.5,   # NORMAL: Quarta fileira (Y≈289)
+    4: 1.0,   # PADRÃO: Quinta fileira (Y≈225)
+    5: 0.8,   # BAIXO: Sexta fileira (Y≈162)
+    6: 0.5    # DESPREZÍVEL: Fileira lá no teto (Y≈99)
 }
 
-# Zona de perigo — blocos perto do fundo
-# DANGER_ZONE_Y: a partir de qual Y (relativo à GAME_REGION) o bloco é perigoso
-# Quanto mais embaixo, maior o multiplicador
-DANGER_ZONE_Y = LEVELS[0]  # últimos 40% da tela
-SCORE_DANGER_HIT = 20  # bônus por hit em bloco na zona de perigo
-SCORE_DANGER_DESTROY = 500  # bônus ALTO por destruir bloco na zona de perigo
-SCORE_CRITICAL_ROW = 2000  # bônus se bloco está na última fileira (quase game over)
+# Substituído por ROW_MULTIPLIERS (scoring por fileira via block.row_index)
+# DANGER_ZONE_Y = LEVELS[0]
+# SCORE_DANGER_HIT = 20
+# SCORE_DANGER_DESTROY = 500
+# SCORE_CRITICAL_ROW = 2000
 
 # ─────────────────────────────────────────────
 # ÂNGULOS DE BUSCA
