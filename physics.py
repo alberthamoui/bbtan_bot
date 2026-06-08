@@ -268,8 +268,8 @@ def _apply_laser(
     ball_count: int,
 ) -> Tuple[float, int]:
     """
-    Efeito do laser (<>): causa ball_count de dano a todos os blocos
-    na mesma linha (Y) e coluna (X) do power-up.
+    Efeito do laser: LASER_H ataca blocos na mesma linha (Y),
+    LASER_V ataca blocos na mesma coluna (X).
     Retorna (score_ganho, blocos_destruidos).
     """
     score = 0.0
@@ -280,9 +280,11 @@ def _apply_laser(
         if block_hp.get(id(block), 0) <= 0:
             continue
 
-        in_row = abs(block.cy - pu.cy) < half_cell
-        in_col = abs(block.cx - pu.cx) < half_cell
-        if not (in_row or in_col):
+        if pu.power_up_type == PowerUpType.LASER_H:
+            hit = abs(block.cy - pu.cy) < half_cell
+        else:
+            hit = abs(block.cx - pu.cx) < half_cell
+        if not hit:
             continue
 
         block_hp[id(block)] -= ball_count
@@ -487,7 +489,7 @@ def simulate_trajectory(
                 collected_pus.add(i)
                 powerups_collected += 1
 
-                if pu.power_up_type == PowerUpType.LASER:
+                if pu.power_up_type in (PowerUpType.LASER_H, PowerUpType.LASER_V):
                     laser_score, laser_destroyed = _apply_laser(pu, blocks, block_hp, ball_count)
                     score += laser_score
                     blocks_destroyed += laser_destroyed

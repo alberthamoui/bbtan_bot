@@ -30,8 +30,9 @@ class BlockType(Enum):
 
 class PowerUpType(Enum):
     EXTRA_BALL = "extra_ball"  # (+) ciano — bola extra
-    LASER = "laser"            # (<>) azul — laser horizontal/vertical
-    BONUS_B = "bonus_b"        # (B) amarelo ouro — multiplicador de bônus
+    LASER_H = "laser_h"       # (<>) azul — laser horizontal (ataca linha)
+    LASER_V = "laser_v"       # (<>) azul — laser vertical (ataca coluna)
+    BONUS_B = "bonus_b"       # (B) amarelo ouro — multiplicador de bônus
     UNKNOWN = "unknown"
 
 
@@ -303,14 +304,37 @@ def detect_blocks(frame: np.ndarray) -> List[Block]:
 
 _POWERUP_HSV_RANGES = [
     (PowerUpType.EXTRA_BALL, cfg.POWERUP_EXTRA_BALL_HSV_LOW, cfg.POWERUP_EXTRA_BALL_HSV_HIGH),
-    (PowerUpType.LASER,      cfg.POWERUP_LASER_HSV_LOW,      cfg.POWERUP_LASER_HSV_HIGH),
+    ("LASER",                cfg.POWERUP_LASER_HSV_LOW,      cfg.POWERUP_LASER_HSV_HIGH),
     (PowerUpType.BONUS_B,    cfg.POWERUP_B_HSV_LOW,          cfg.POWERUP_B_HSV_HIGH),
 ]
+
+
+def _detect_laser_orientation(frame_gray: np.ndarray, cx: float, cy: float, radius: float) -> PowerUpType:
+    """
+    Determina se o laser é horizontal ou vertical analisando o padrão
+    interno do ícone (setas <> vs setas verticais).
+    """
+    r = int(radius)
+    h, w = frame_gray.shape[:2]
+    x1 = max(0, int(cx) - r)
+    y1 = max(0, int(cy) - r)
+    x2 = min(w, int(cx) + r)
+    y2 = min(h, int(cy) + r)
+
+    roi = frame_gray[y1:y2, x1:x2]
+    if roi.size == 0 or roi.shape[0] < 3 or roi.shape[1] < 3:
+        return PowerUpType.LASER_H
+
+    h_proj = np.var(np.mean(roi, axis=1))
+    v_proj = np.var(np.mean(roi, axis=0))
+
+    return PowerUpType.LASER_V if h_proj > v_proj else PowerUpType.LASER_H
 
 
 def detect_powerups(frame: np.ndarray) -> List[PowerUp]:
     """Detecta todos os tipos de power-up circulares no frame."""
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
 
     powerups = []
@@ -329,7 +353,11 @@ def detect_powerups(frame: np.ndarray) -> List[PowerUp]:
             circularity = 4 * np.pi * area / (peri * peri)
             if circularity > 0.6:
                 (cx, cy), radius = cv2.minEnclosingCircle(cnt)
-                powerups.append(PowerUp(cx=cx, cy=cy, radius=radius, power_up_type=ptype))
+                if ptype == "LASER":
+                    final_type = _detect_laser_orientation(gray, cx, cy, radius)
+                else:
+                    final_type = ptype
+                powerups.append(PowerUp(cx=cx, cy=cy, radius=radius, power_up_type=final_type))
 
     return powerups
 
@@ -470,6 +498,7 @@ def scan_game() -> GameState:
             powerups=[],
             ball_x=None,
             ball_y=None,
+            detected_ball_count=0, 
             game_over=True,
             white_ratio=white_ratio,
             raw_frame=frame,
@@ -496,7 +525,8 @@ def scan_game() -> GameState:
 
     _POWERUP_DEBUG_LABEL = {
         PowerUpType.EXTRA_BALL: "+",
-        PowerUpType.LASER:      "<>",
+        PowerUpType.LASER_H:    "<>",
+        PowerUpType.LASER_V:    "^v",
         PowerUpType.BONUS_B:    "B",
         PowerUpType.UNKNOWN:    "?",
     }
