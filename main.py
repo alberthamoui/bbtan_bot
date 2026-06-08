@@ -23,23 +23,37 @@ import config as cfg
 from vision import scan_game, GameState
 from physics import find_best_angle, SimResult
 from executor import execute_shot, wait_for_turn_end, wait_for_turn_end_smart
-from debug_view import draw_trajectory, draw_stats_overlay
+from tools.debug_view import draw_trajectory, draw_stats_overlay
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description="BBTAN Bot")
-    parser.add_argument("--debug", action="store_true",
-                        help="Mostra visualização de debug a cada turno")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="Simula sem mover o mouse")
-    parser.add_argument("--smart-wait", action="store_true",
-                        help="Usa detecção visual para esperar turno (mais lento)")
-    parser.add_argument("--delay", type=float, default=1.0,
-                        help="Delay inicial em segundos antes de começar")
-    parser.add_argument("--max-turns", type=int, default=0,
-                        help="Limite de turnos (0 = infinito)")
-    parser.add_argument("--balls", type=int, default=0,
-                        help="Override: numero fixo de bolas (0 = detectar visualmente)")
+    parser.add_argument(
+        "--debug", action="store_true", help="Mostra visualização de debug a cada turno"
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true", help="Simula sem mover o mouse"
+    )
+    parser.add_argument(
+        "--smart-wait",
+        action="store_true",
+        help="Usa detecção visual para esperar turno (mais lento)",
+    )
+    parser.add_argument(
+        "--delay",
+        type=float,
+        default=1.0,
+        help="Delay inicial em segundos antes de começar",
+    )
+    parser.add_argument(
+        "--max-turns", type=int, default=0, help="Limite de turnos (0 = infinito)"
+    )
+    parser.add_argument(
+        "--balls",
+        type=int,
+        default=0,
+        help="Override: numero fixo de bolas (0 = detectar visualmente)",
+    )
     return parser.parse_args()
 
 
@@ -59,7 +73,9 @@ def run_turn(
     state = scan_game()
 
     if state.game_over:
-        print(f"  [GAME OVER] Tela branca detectada ({state.white_ratio:.0%}) — parando bot")
+        print(
+            f"  [GAME OVER] Tela branca detectada ({state.white_ratio:.0%}) — parando bot"
+        )
         return "game_over", 0
 
     if state.ball_x is None:
@@ -72,15 +88,21 @@ def run_turn(
 
     ball_x = state.ball_x
     ball_y = state.ball_y
-    ball_count = ball_count_override if ball_count_override > 0 else state.detected_ball_count
+    ball_count = (
+        ball_count_override if ball_count_override > 0 else state.detected_ball_count
+    )
 
-    print(f"  Bola: ({ball_x:.0f}, {ball_y:.0f})  |  Bolas: {ball_count}"
-          f"{' (override)' if ball_count_override > 0 else ' (detectado)'}")
+    print(
+        f"  Bola: ({ball_x:.0f}, {ball_y:.0f})  |  Bolas: {ball_count}"
+        f"{' (override)' if ball_count_override > 0 else ' (detectado)'}"
+    )
     print(f"  Blocos: {len(state.blocks)}  |  Power-ups: {len(state.powerups)}")
 
     # ── Alerta de perigo ──
     danger_blocks = [b for b in state.blocks if b.cy >= cfg.DANGER_ZONE_Y]
-    critical_blocks = [b for b in state.blocks if b.cy >= cfg.WALL_BOTTOM - cfg.BLOCK_SIZE]
+    critical_blocks = [
+        b for b in state.blocks if b.cy >= cfg.WALL_BOTTOM - cfg.BLOCK_SIZE
+    ]
     if critical_blocks:
         print(f"  [!!!] CRITICO: {len(critical_blocks)} bloco(s) na ultima fileira!")
         for b in critical_blocks:
@@ -91,15 +113,19 @@ def run_turn(
     # ── 2. SIMULAÇÃO ──
     t0 = time.perf_counter()
     best, all_results = find_best_angle(
-        ball_x, ball_y,
-        state.blocks, state.powerups,
+        ball_x,
+        ball_y,
+        state.blocks,
+        state.powerups,
         ball_count=ball_count,
     )
     sim_time = time.perf_counter() - t0
 
     print(f"  Melhor angulo: {best.angle:.1f}°")
-    print(f"  Score: {best.score:.0f} (hits={best.total_hits}, "
-          f"destroyed={best.blocks_destroyed}, powerups={best.powerups_collected})")
+    print(
+        f"  Score: {best.score:.0f} (hits={best.total_hits}, "
+        f"destroyed={best.blocks_destroyed}, powerups={best.powerups_collected})"
+    )
     print(f"  Dano por hit: {ball_count}x  |  Simulacao: {sim_time:.2f}s")
 
     # ── 3. DEBUG VISUAL ──
@@ -109,7 +135,7 @@ def run_turn(
         vis = draw_stats_overlay(vis, best, state)
         cv2.imshow("BBTAN Bot", vis)
         key = cv2.waitKey(1) & 0xFF
-        if key == ord('q'):
+        if key == ord("q"):
             return False, 0
 
     # ── 4. EXECUÇÃO ──
@@ -185,7 +211,9 @@ def main():
                 consecutive_fails += 1
                 if consecutive_fails >= max_fails:
                     print(f"\n[!] {max_fails} falhas consecutivas — abortando.")
-                    print("    Verifique se o jogo esta visivel e a GAME_REGION esta correta.")
+                    print(
+                        "    Verifique se o jogo esta visivel e a GAME_REGION esta correta."
+                    )
                     break
                 time.sleep(1.0)
 

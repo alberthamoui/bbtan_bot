@@ -17,36 +17,39 @@ from typing import List, Optional, Tuple
 
 import config as cfg
 
-
 # ─────────────────────────────────────────────
 # TIPOS DE DADOS
 # ─────────────────────────────────────────────
 
+
 class BlockType(Enum):
-    SQUARE   = "square"
+    SQUARE = "square"
     TRIANGLE = "triangle"
-    UNKNOWN  = "unknown"
+    UNKNOWN = "unknown"
+
 
 class TriangleOrientation(Enum):
     """Orientação do triângulo baseada em onde fica o vértice agudo."""
-    TOP_LEFT     = "top_left"
-    TOP_RIGHT    = "top_right"
-    BOTTOM_LEFT  = "bottom_left"
+
+    TOP_LEFT = "top_left"
+    TOP_RIGHT = "top_right"
+    BOTTOM_LEFT = "bottom_left"
     BOTTOM_RIGHT = "bottom_right"
-    UNKNOWN      = "unknown"
+    UNKNOWN = "unknown"
 
 
 @dataclass
 class Block:
     """Representa um bloco detectado no jogo."""
-    x: int              # canto superior esquerdo do bounding box
+
+    x: int  # canto superior esquerdo do bounding box
     y: int
-    w: int              # largura
-    h: int              # altura
-    cx: float           # centro X
-    cy: float           # centro Y
+    w: int  # largura
+    h: int  # altura
+    cx: float  # centro X
+    cy: float  # centro Y
     block_type: BlockType = BlockType.UNKNOWN
-    hp: int = 1         # hit points estimado (via OCR básico)
+    hp: int = 1  # hit points estimado (via OCR básico)
     vertices: np.ndarray = field(default_factory=lambda: np.array([]))
     tri_orientation: TriangleOrientation = TriangleOrientation.UNKNOWN
 
@@ -63,6 +66,7 @@ class Block:
 @dataclass
 class PowerUp:
     """Representa um power-up circular (+)."""
+
     cx: float
     cy: float
     radius: float
@@ -71,13 +75,14 @@ class PowerUp:
 @dataclass
 class GameState:
     """Estado completo do jogo em um frame."""
+
     blocks: List[Block]
     powerups: List[PowerUp]
-    ball_x: Optional[float]      # posição X da bola na base
-    ball_y: Optional[float]      # posição Y da bola na base
-    detected_ball_count: int = 1  # bolas contadas visualmente na base
-    game_over: bool = False      # tela de continue/game over detectada
-    white_ratio: float = 0.0     # porcentagem de pixels brancos
+    ball_x: Optional[float]  # posição X da bola na base
+    ball_y: Optional[float]  # posição Y da bola na base
+    detected_ball_count: int  # bolas contadas visualmente na base
+    game_over: bool = False  # tela de continue/game over detectada
+    white_ratio: float = 0.0  # porcentagem de pixels brancos
     raw_frame: np.ndarray = field(repr=False, default_factory=lambda: np.array([]))
     debug_frame: np.ndarray = field(repr=False, default_factory=lambda: np.array([]))
 
@@ -87,6 +92,7 @@ class GameState:
 # ─────────────────────────────────────────────
 
 _sct = mss.mss()  # instância global reutilizável
+
 
 def capture_screen() -> np.ndarray:
     """Captura a região do jogo e retorna como array BGR (OpenCV)."""
@@ -102,7 +108,10 @@ def capture_screen() -> np.ndarray:
 # DETECÇÃO DE BLOCOS
 # ─────────────────────────────────────────────
 
-def _classify_polygon(approx: np.ndarray, bbox: Tuple[int,int,int,int]) -> Tuple[BlockType, TriangleOrientation]:
+
+def _classify_polygon(
+    approx: np.ndarray, bbox: Tuple[int, int, int, int]
+) -> Tuple[BlockType, TriangleOrientation]:
     """Classifica o polígono como quadrado ou triângulo e determina orientação."""
     n_vertices = len(approx)
 
@@ -122,7 +131,9 @@ def _classify_polygon(approx: np.ndarray, bbox: Tuple[int,int,int,int]) -> Tuple
         return BlockType.UNKNOWN, TriangleOrientation.UNKNOWN
 
 
-def _get_triangle_orientation(approx: np.ndarray, bbox: Tuple[int,int,int,int]) -> TriangleOrientation:
+def _get_triangle_orientation(
+    approx: np.ndarray, bbox: Tuple[int, int, int, int]
+) -> TriangleOrientation:
     """Determina a orientação do triângulo baseado na posição do vértice agudo."""
     x, y, w, h = bbox
     cx_box = x + w / 2
@@ -130,7 +141,7 @@ def _get_triangle_orientation(approx: np.ndarray, bbox: Tuple[int,int,int,int]) 
 
     # Encontra o vértice mais distante do centro do bounding box
     pts = approx.reshape(-1, 2)
-    distances = np.sqrt((pts[:, 0] - cx_box)**2 + (pts[:, 1] - cy_box)**2)
+    distances = np.sqrt((pts[:, 0] - cx_box) ** 2 + (pts[:, 1] - cy_box) ** 2)
     tip_idx = np.argmax(distances)
     tip = pts[tip_idx]
 
@@ -180,7 +191,7 @@ def _read_hp_ocr(frame_gray: np.ndarray, x: int, y: int, w: int, h: int) -> int:
     binary = cv2.copyMakeBorder(binary, 10, 10, 10, 10, cv2.BORDER_CONSTANT, value=0)
 
     # OCR com config para dígitos apenas
-    config = '--psm 7 -c tessedit_char_whitelist=0123456789'
+    config = "--psm 7 -c tessedit_char_whitelist=0123456789"
     try:
         text = pytesseract.image_to_string(binary, config=config).strip()
         if text and text.isdigit():
@@ -242,7 +253,10 @@ def detect_blocks(frame: np.ndarray) -> List[Block]:
         hp = _read_hp_ocr(gray, x, y, w, h)
 
         block = Block(
-            x=x, y=y, w=w, h=h,
+            x=x,
+            y=y,
+            w=w,
+            h=h,
             cx=x + w / 2.0,
             cy=y + h / 2.0,
             block_type=block_type,
@@ -258,6 +272,7 @@ def detect_blocks(frame: np.ndarray) -> List[Block]:
 # ─────────────────────────────────────────────
 # DETECÇÃO DE POWER-UPS
 # ─────────────────────────────────────────────
+
 
 def detect_powerups(frame: np.ndarray) -> List[PowerUp]:
     """Detecta power-ups circulares (+ ciano)."""
@@ -291,6 +306,7 @@ def detect_powerups(frame: np.ndarray) -> List[PowerUp]:
 # ─────────────────────────────────────────────
 # DETECÇÃO DA BOLA
 # ─────────────────────────────────────────────
+
 
 def detect_ball(frame: np.ndarray) -> Optional[Tuple[float, float]]:
     """
@@ -359,7 +375,7 @@ def count_balls(frame: np.ndarray) -> int:
     # Método 1: contar contornos individuais com tamanho de bola
     # Cada bola tem área ~pi*r^2
     ball_area = np.pi * cfg.BALL_RADIUS * cfg.BALL_RADIUS
-    min_ball_area = ball_area * 0.3   # margem pra bolas parcialmente visíveis
+    min_ball_area = ball_area * 0.3  # margem pra bolas parcialmente visíveis
     max_single_ball = ball_area * 2.5  # uma bola sozinha
 
     count = 0
@@ -391,6 +407,7 @@ def count_balls(frame: np.ndarray) -> int:
 # Porcentagem mínima de pixels brancos para considerar game over
 GAMEOVER_WHITE_RATIO = 0.25  # 25% da tela branca = popup aberto
 
+
 def detect_game_over(frame: np.ndarray) -> tuple:
     """
     Detecta se a tela de game over/continue apareceu.
@@ -409,6 +426,7 @@ def detect_game_over(frame: np.ndarray) -> tuple:
 # PIPELINE COMPLETO
 # ─────────────────────────────────────────────
 
+
 def scan_game() -> GameState:
     """Executa o pipeline completo de visão e retorna o estado do jogo."""
     frame = capture_screen()
@@ -417,10 +435,14 @@ def scan_game() -> GameState:
     is_game_over, white_ratio = detect_game_over(frame)
     if is_game_over:
         return GameState(
-            blocks=[], powerups=[],
-            ball_x=None, ball_y=None,
-            game_over=True, white_ratio=white_ratio,
-            raw_frame=frame, debug_frame=frame.copy(),
+            blocks=[],
+            powerups=[],
+            ball_x=None,
+            ball_y=None,
+            game_over=True,
+            white_ratio=white_ratio,
+            raw_frame=frame,
+            debug_frame=frame.copy(),
         )
 
     blocks = detect_blocks(frame)
@@ -437,13 +459,21 @@ def scan_game() -> GameState:
         color = (0, 255, 0) if b.block_type == BlockType.SQUARE else (0, 255, 255)
         cv2.rectangle(debug, (b.x, b.y), (b.x + b.w, b.y + b.h), color, 2)
         label = f"{b.block_type.value} hp={b.hp}"
-        cv2.putText(debug, label, (b.x, b.y - 5),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
+        cv2.putText(
+            debug, label, (b.x, b.y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1
+        )
 
     for p in powerups:
         cv2.circle(debug, (int(p.cx), int(p.cy)), int(p.radius), (255, 255, 0), 2)
-        cv2.putText(debug, "+", (int(p.cx) - 5, int(p.cy) + 5),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 2)
+        cv2.putText(
+            debug,
+            "+",
+            (int(p.cx) - 5, int(p.cy) + 5),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            (255, 255, 0),
+            2,
+        )
 
     if ball_pos:
         cv2.circle(debug, (int(ball_x), int(ball_y)), 8, (0, 0, 255), 2)
@@ -454,7 +484,8 @@ def scan_game() -> GameState:
         ball_x=ball_x,
         ball_y=ball_y,
         detected_ball_count=n_balls,
-        game_over=False, white_ratio=white_ratio,
+        game_over=False,
+        white_ratio=white_ratio,
         raw_frame=frame,
         debug_frame=debug,
     )
@@ -463,6 +494,7 @@ def scan_game() -> GameState:
 # ─────────────────────────────────────────────
 # UTILITÁRIO DE DEBUG
 # ─────────────────────────────────────────────
+
 
 def show_debug(state: GameState, wait: int = 0):
     """Mostra o frame de debug com anotações. Pressione qualquer tecla para fechar."""

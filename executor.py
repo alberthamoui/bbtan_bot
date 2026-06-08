@@ -13,10 +13,9 @@ import pyautogui
 
 import config as cfg
 
-
 # Segurança do PyAutoGUI
-pyautogui.FAILSAFE = True   # mova o mouse pro canto superior esquerdo pra abortar
-pyautogui.PAUSE = 0.05      # pausa mínima entre ações
+pyautogui.FAILSAFE = True  # mova o mouse pro canto superior esquerdo pra abortar
+pyautogui.PAUSE = 0.05  # pausa mínima entre ações
 
 
 def angle_to_screen_coords(
@@ -81,7 +80,7 @@ def execute_shot_swipe(ball_x: float, ball_y: float, angle_deg: float):
         int(tx - sx),
         int(ty - sy),
         duration=cfg.DRAG_DURATION,
-        button='left',
+        button="left",
     )
 
 
@@ -93,7 +92,7 @@ def execute_shot_hold_release(ball_x: float, ball_y: float, angle_deg: float):
     sx, sy, tx, ty = angle_to_screen_coords(ball_x, ball_y, angle_deg)
 
     # Press na bola
-    pyautogui.mouseDown(int(sx), int(sy), button='left')
+    pyautogui.mouseDown(int(sx), int(sy), button="left")
     time.sleep(0.1)
 
     # Move suavemente até o alvo (define a direção)
@@ -101,7 +100,7 @@ def execute_shot_hold_release(ball_x: float, ball_y: float, angle_deg: float):
     time.sleep(0.05)
 
     # Release para disparar
-    pyautogui.mouseUp(button='left')
+    pyautogui.mouseUp(button="left")
 
 
 def speed_up_click():
@@ -140,9 +139,9 @@ def wait_for_turn_end_smart(ball_y_threshold: float = None):
     if ball_y_threshold is None:
         ball_y_threshold = cfg.WALL_BOTTOM - 20
 
-    check_interval = 0.3   # checa a cada 300ms
+    check_interval = 0.3  # checa a cada 300ms
     stable_count = 0
-    max_wait = 15.0         # timeout máximo de 15 segundos
+    max_wait = 15.0  # timeout máximo de 15 segundos
     elapsed = 0.0
 
     while elapsed < max_wait:
@@ -155,7 +154,7 @@ def wait_for_turn_end_smart(ball_y_threshold: float = None):
         if ball_pos and ball_pos[1] > ball_y_threshold:
             stable_count += 1
             if stable_count >= 3:  # bola na base por 3 checks consecutivos
-                time.sleep(0.5)   # pausa extra de segurança
+                time.sleep(0.5)  # pausa extra de segurança
                 return
         else:
             stable_count = 0

@@ -21,11 +21,13 @@ import numpy as np
 
 import config as cfg
 from vision import (
-    capture_screen, detect_blocks, detect_powerups, detect_ball,
+    capture_screen,
+    detect_blocks,
+    detect_powerups,
+    detect_ball,
     BlockType,
 )
 from physics import find_best_angle, simulate_trajectory
-
 
 WINDOW_NAME = "BBTAN Monitor"
 SCALE = 0.5  # escala da janela (0.5 = metade do tamanho)
@@ -53,17 +55,28 @@ def build_frame(ball_count: int, run_sim: bool) -> np.ndarray:
         cv2.line(left, (x, 0), (x, h), (40, 40, 40), 1)
 
     # Paredes
-    cv2.rectangle(left,
+    cv2.rectangle(
+        left,
         (cfg.WALL_LEFT, cfg.WALL_TOP),
         (cfg.WALL_RIGHT, cfg.WALL_BOTTOM),
-        (0, 80, 80), 1)
+        (0, 80, 80),
+        1,
+    )
 
     # Blocos
     for b in blocks:
         color = (0, 255, 255) if b.block_type == BlockType.TRIANGLE else (0, 255, 0)
         cv2.rectangle(left, (b.x, b.y), (b.x + b.w, b.y + b.h), color, 1)
-        cv2.putText(left, f"{b.hp}", (b.x + 2, b.y + 14),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.35, color, 1, cv2.LINE_AA)
+        cv2.putText(
+            left,
+            f"{b.hp}",
+            (b.x + 2, b.y + 14),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.35,
+            color,
+            1,
+            cv2.LINE_AA,
+        )
 
     # Power-ups
     for p in powerups:
@@ -71,8 +84,13 @@ def build_frame(ball_count: int, run_sim: bool) -> np.ndarray:
 
     # Bola
     if ball_pos:
-        cv2.circle(left, (int(ball_pos[0]), int(ball_pos[1])),
-                   cfg.BALL_RADIUS, (255, 255, 255), 1)
+        cv2.circle(
+            left,
+            (int(ball_pos[0]), int(ball_pos[1])),
+            cfg.BALL_RADIUS,
+            (255, 255, 255),
+            1,
+        )
 
     # ── Painel direito: simulação ──
     right = frame.copy()
@@ -83,7 +101,10 @@ def build_frame(ball_count: int, run_sim: bool) -> np.ndarray:
     if run_sim and blocks:
         t0 = time.perf_counter()
         best, all_results = find_best_angle(
-            ball_x, ball_y, blocks, powerups,
+            ball_x,
+            ball_y,
+            blocks,
+            powerups,
             ball_count=ball_count,
         )
         sim_time = time.perf_counter() - t0
@@ -91,8 +112,11 @@ def build_frame(ball_count: int, run_sim: bool) -> np.ndarray:
         # Desenha top 5 trajetórias (cinza)
         for r in all_results[1:6]:
             tr = simulate_trajectory(
-                ball_x, ball_y, r.angle,
-                blocks, powerups,
+                ball_x,
+                ball_y,
+                r.angle,
+                blocks,
+                powerups,
                 ball_count=ball_count,
                 record_path=True,
             )
@@ -109,10 +133,14 @@ def build_frame(ball_count: int, run_sim: bool) -> np.ndarray:
         if len(best.path) >= 5:
             dx = best.path[4][0] - ball_x
             dy = best.path[4][1] - ball_y
-            cv2.arrowedLine(right,
+            cv2.arrowedLine(
+                right,
                 (int(ball_x), int(ball_y)),
                 (int(ball_x + dx * 3), int(ball_y + dy * 3)),
-                (0, 200, 255), 2, tipLength=0.3)
+                (0, 200, 255),
+                2,
+                tipLength=0.3,
+            )
 
     # ── Combina ──
     combined = np.hstack([left, right])
@@ -128,25 +156,57 @@ def build_frame(ball_count: int, run_sim: bool) -> np.ndarray:
         lines.append("Bola: NAO ENCONTRADA")
 
     if best:
-        lines.append(f"Angulo: {best.angle:.0f}°  Score: {best.score:.0f}  "
-                      f"Hits: {best.total_hits}  Destroy: {best.blocks_destroyed}  "
-                      f"PwrUp: {best.powerups_collected}")
+        lines.append(
+            f"Angulo: {best.angle:.0f}°  Score: {best.score:.0f}  "
+            f"Hits: {best.total_hits}  Destroy: {best.blocks_destroyed}  "
+            f"PwrUp: {best.powerups_collected}"
+        )
         lines.append(f"Sim: {sim_time*1000:.0f}ms")
     elif not run_sim:
         lines.append("Simulacao desligada (--no-sim)")
 
     for i, line in enumerate(lines):
         y = oy + i * 16
-        cv2.putText(combined, line, (6, y + 1),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 0, 0), 2, cv2.LINE_AA)
-        cv2.putText(combined, line, (5, y),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 255, 200), 1, cv2.LINE_AA)
+        cv2.putText(
+            combined,
+            line,
+            (6, y + 1),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.35,
+            (0, 0, 0),
+            2,
+            cv2.LINE_AA,
+        )
+        cv2.putText(
+            combined,
+            line,
+            (5, y),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.35,
+            (0, 255, 200),
+            1,
+            cv2.LINE_AA,
+        )
 
     # Labels dos painéis
-    cv2.putText(combined, "DETECCAO", (w - 80, h - 8),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.35, (100, 100, 100), 1)
-    cv2.putText(combined, "SIMULACAO", (w + w - 85, h - 8),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.35, (100, 100, 100), 1)
+    cv2.putText(
+        combined,
+        "DETECCAO",
+        (w - 80, h - 8),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.35,
+        (100, 100, 100),
+        1,
+    )
+    cv2.putText(
+        combined,
+        "SIMULACAO",
+        (w + w - 85, h - 8),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.35,
+        (100, 100, 100),
+        1,
+    )
 
     # Redimensiona
     if SCALE != 1.0:
@@ -161,8 +221,12 @@ def main():
     parser = argparse.ArgumentParser(description="BBTAN Monitor ao vivo")
     parser.add_argument("--balls", type=int, default=1, help="Numero de bolas")
     parser.add_argument("--fps", type=int, default=5, help="Atualizacoes por segundo")
-    parser.add_argument("--no-sim", action="store_true", help="Desliga simulacao (so deteccao)")
-    parser.add_argument("--scale", type=float, default=0.5, help="Escala da janela (0.5 = metade)")
+    parser.add_argument(
+        "--no-sim", action="store_true", help="Desliga simulacao (so deteccao)"
+    )
+    parser.add_argument(
+        "--scale", type=float, default=0.5, help="Escala da janela (0.5 = metade)"
+    )
     args = parser.parse_args()
 
     global SCALE
@@ -191,7 +255,7 @@ def main():
         wait_ms = max(1, int((interval - elapsed) * 1000))
 
         key = cv2.waitKey(wait_ms) & 0xFF
-        if key == ord('q'):
+        if key == ord("q"):
             break
 
     cv2.destroyAllWindows()
