@@ -28,6 +28,13 @@ class BlockType(Enum):
     UNKNOWN = "unknown"
 
 
+class PowerUpType(Enum):
+    EXTRA_BALL = "extra_ball"  # (+) ciano — bola extra
+    LASER = "laser"            # (<>) azul — laser horizontal/vertical
+    BONUS_B = "bonus_b"        # (B) amarelo ouro — multiplicador de bônus
+    UNKNOWN = "unknown"
+
+
 class TriangleOrientation(Enum):
     """Orientação do triângulo baseada em onde fica o vértice agudo."""
 
@@ -52,6 +59,7 @@ class Block:
     hp: int = 1  # hit points estimado (via OCR básico)
     vertices: np.ndarray = field(default_factory=lambda: np.array([]))
     tri_orientation: TriangleOrientation = TriangleOrientation.UNKNOWN
+    row_index: int = -1  # índice em cfg.LEVELS (0=mais baixo/perigoso, -1=desconhecido)
 
     @property
     def rect(self) -> Tuple[int, int, int, int]:
@@ -65,11 +73,12 @@ class Block:
 
 @dataclass
 class PowerUp:
-    """Representa um power-up circular (+)."""
+    """Representa um power-up detectado no jogo."""
 
     cx: float
     cy: float
     radius: float
+    power_up_type: PowerUpType = PowerUpType.UNKNOWN
 
 
 @dataclass
@@ -156,10 +165,10 @@ def _get_triangle_orientation(
         return TriangleOrientation.BOTTOM_RIGHT
 
 
-def _read_hp_ocr(frame_gray: np.ndarray, x: int, y: int, w: int, h: int) -> int:
+def _read_hp_ocr(frame_bgr: np.ndarray, frame_gray: np.ndarray, x: int, y: int, w: int, h: int) -> int:
     """
     Lê o número de HP do bloco via OCR (pytesseract).
-    O número é escuro sobre fundo colorido.
+    Usa máscara HSV para isolar os dígitos pela cor específica do texto.
     Fallback para estimativa se OCR falhar.
     """
     try:
@@ -167,41 +176,40 @@ def _read_hp_ocr(frame_gray: np.ndarray, x: int, y: int, w: int, h: int) -> int:
     except ImportError:
         return _read_hp_fallback(frame_gray, x, y, w, h)
 
-    # Recorta a região central do bloco (onde fica o número)
     pad_x, pad_y = w // 5, h // 5
-    roi = frame_gray[y + pad_y : y + h - pad_y, x + pad_x : x + w - pad_x]
+    roi_bgr = frame_bgr[y + pad_y : y + h - pad_y, x + pad_x : x + w - pad_x]
 
-    if roi.size == 0 or roi.shape[0] < 5 or roi.shape[1] < 5:
+    if roi_bgr.size == 0 or roi_bgr.shape[0] < 5 or roi_bgr.shape[1] < 5:
         return 1
 
-    # Pré-processamento para OCR
-    # 1. Redimensiona para altura fixa (melhora precisão do tesseract)
+    # Isola os dígitos pela cor HSV do texto
+    hsv = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2HSV)
+    mask = cv2.inRange(hsv, cfg.HP_TEXT_HSV_LOW, cfg.HP_TEXT_HSV_HIGH)
+
+    # Redimensiona para altura fixa (melhora precisão do tesseract)
     target_h = 40
-    scale = target_h / roi.shape[0]
-    roi_big = cv2.resize(roi, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+    scale = target_h / mask.shape[0]
+    mask_big = cv2.resize(mask, None, fx=scale, fy=scale, interpolation=cv2.INTER_NEAREST)
 
-    # 2. Binariza — número escuro sobre fundo claro
-    _, binary = cv2.threshold(roi_big, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+    # Tesseract prefere texto escuro em fundo branco
+    binary = cv2.bitwise_not(mask_big)
 
-    # 3. Limpeza
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
     binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
 
-    # 4. Adiciona borda branca (tesseract precisa de margem)
-    binary = cv2.copyMakeBorder(binary, 10, 10, 10, 10, cv2.BORDER_CONSTANT, value=0)
+    # Adiciona borda branca (tesseract precisa de margem)
+    binary = cv2.copyMakeBorder(binary, 10, 10, 10, 10, cv2.BORDER_CONSTANT, value=255)
 
-    # OCR com config para dígitos apenas
     config = "--psm 7 -c tessedit_char_whitelist=0123456789"
     try:
         text = pytesseract.image_to_string(binary, config=config).strip()
         if text and text.isdigit():
             hp = int(text)
-            if 1 <= hp <= 999:
+            if 1 <= hp <= 9999:
                 return hp
     except Exception:
         pass
 
-    # Fallback se OCR falhou
     return _read_hp_fallback(frame_gray, x, y, w, h)
 
 
@@ -220,6 +228,21 @@ def _read_hp_fallback(frame_gray: np.ndarray, x: int, y: int, w: int, h: int) ->
     n_labels, _ = cv2.connectedComponents(binary)
     hp = max(1, n_labels - 1)
     return min(hp, 99)
+
+
+def _get_row_index(cy: float) -> int:
+    """
+    Retorna o índice da fileira em cfg.LEVELS mais próxima do bloco.
+    0 = fileira mais baixa (LEVELS[0], maior perigo).
+    """
+    best_idx = 0
+    best_dist = abs(cy - cfg.LEVELS[0])
+    for i, level_y in enumerate(cfg.LEVELS):
+        dist = abs(cy - level_y)
+        if dist < best_dist:
+            best_dist = dist
+            best_idx = i
+    return best_idx
 
 
 def detect_blocks(frame: np.ndarray) -> List[Block]:
@@ -250,7 +273,10 @@ def detect_blocks(frame: np.ndarray) -> List[Block]:
         approx = cv2.approxPolyDP(cnt, cfg.POLY_APPROX_FACTOR * peri, True)
 
         block_type, tri_orient = _classify_polygon(approx, (x, y, w, h))
-        hp = _read_hp_ocr(gray, x, y, w, h)
+        hp = _read_hp_ocr(frame, gray, x, y, w, h)
+
+        cy = y + h / 2.0
+        row_idx = _get_row_index(cy)
 
         block = Block(
             x=x,
@@ -258,11 +284,12 @@ def detect_blocks(frame: np.ndarray) -> List[Block]:
             w=w,
             h=h,
             cx=x + w / 2.0,
-            cy=y + h / 2.0,
+            cy=cy,
             block_type=block_type,
             hp=hp,
             vertices=approx.reshape(-1, 2),
             tri_orientation=tri_orient,
+            row_index=row_idx,
         )
         blocks.append(block)
 
@@ -274,31 +301,35 @@ def detect_blocks(frame: np.ndarray) -> List[Block]:
 # ─────────────────────────────────────────────
 
 
+_POWERUP_HSV_RANGES = [
+    (PowerUpType.EXTRA_BALL, cfg.POWERUP_EXTRA_BALL_HSV_LOW, cfg.POWERUP_EXTRA_BALL_HSV_HIGH),
+    (PowerUpType.LASER,      cfg.POWERUP_LASER_HSV_LOW,      cfg.POWERUP_LASER_HSV_HIGH),
+    (PowerUpType.BONUS_B,    cfg.POWERUP_B_HSV_LOW,          cfg.POWERUP_B_HSV_HIGH),
+]
+
+
 def detect_powerups(frame: np.ndarray) -> List[PowerUp]:
-    """Detecta power-ups circulares (+ ciano)."""
+    """Detecta todos os tipos de power-up circulares no frame."""
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-    mask = cv2.inRange(hsv, cfg.POWERUP_HSV_LOW, cfg.POWERUP_HSV_HIGH)
-
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
-
-    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     powerups = []
-    for cnt in contours:
-        area = cv2.contourArea(cnt)
-        if area < 50:
-            continue
+    for ptype, low, high in _POWERUP_HSV_RANGES:
+        mask = cv2.inRange(hsv, low, high)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
 
-        # Verificar circularidade
-        peri = cv2.arcLength(cnt, True)
-        if peri == 0:
-            continue
-        circularity = 4 * np.pi * area / (peri * peri)
-
-        if circularity > 0.6:  # é circular o suficiente
-            (cx, cy), radius = cv2.minEnclosingCircle(cnt)
-            powerups.append(PowerUp(cx=cx, cy=cy, radius=radius))
+        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        for cnt in contours:
+            area = cv2.contourArea(cnt)
+            if area < 50:
+                continue
+            peri = cv2.arcLength(cnt, True)
+            if peri == 0:
+                continue
+            circularity = 4 * np.pi * area / (peri * peri)
+            if circularity > 0.6:
+                (cx, cy), radius = cv2.minEnclosingCircle(cnt)
+                powerups.append(PowerUp(cx=cx, cy=cy, radius=radius, power_up_type=ptype))
 
     return powerups
 
@@ -463,11 +494,17 @@ def scan_game() -> GameState:
             debug, label, (b.x, b.y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1
         )
 
+    _POWERUP_DEBUG_LABEL = {
+        PowerUpType.EXTRA_BALL: "+",
+        PowerUpType.LASER:      "<>",
+        PowerUpType.BONUS_B:    "B",
+        PowerUpType.UNKNOWN:    "?",
+    }
     for p in powerups:
         cv2.circle(debug, (int(p.cx), int(p.cy)), int(p.radius), (255, 255, 0), 2)
         cv2.putText(
             debug,
-            "+",
+            _POWERUP_DEBUG_LABEL[p.power_up_type],
             (int(p.cx) - 5, int(p.cy) + 5),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.5,

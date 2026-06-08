@@ -20,7 +20,7 @@ import sys
 import cv2
 
 import config as cfg
-from vision import scan_game, GameState
+from vision import scan_game, capture_screen, count_balls, GameState
 from physics import find_best_angle, SimResult
 from executor import execute_shot, wait_for_turn_end, wait_for_turn_end_smart
 from tools.debug_view import draw_trajectory, draw_stats_overlay
@@ -59,15 +59,15 @@ def parse_args():
 
 def run_turn(
     ball_count_override: int = 0,
+    current_ball_count: int = 1,
     debug: bool = False,
     dry_run: bool = False,
 ) -> tuple:
     """
     Executa um turno completo.
-    Retorna (status, detected_ball_count)
+    Retorna (status, extra_balls_predicted)
     status: True (sucesso), False (falha), "game_over"
-    detected_ball_count: bolas contadas visualmente na base
-    ball_count_override: se > 0, usa esse valor em vez da deteccao visual
+    extra_balls_predicted: power-ups (+) previstos pela simulação
     """
     # ── 1. CAPTURA E DETECÇÃO ──
     state = scan_game()
@@ -88,27 +88,30 @@ def run_turn(
 
     ball_x = state.ball_x
     ball_y = state.ball_y
-    ball_count = (
-        ball_count_override if ball_count_override > 0 else state.detected_ball_count
-    )
+    if ball_count_override > 0:
+        ball_count = ball_count_override
+    else:
+        ball_count = max(state.detected_ball_count, current_ball_count)
 
-    print(
-        f"  Bola: ({ball_x:.0f}, {ball_y:.0f})  |  Bolas: {ball_count}"
-        f"{' (override)' if ball_count_override > 0 else ' (detectado)'}"
-    )
+    print(f"  Bola: ({ball_x:.0f}, {ball_y:.0f})  |  Bolas: {ball_count}")
     print(f"  Blocos: {len(state.blocks)}  |  Power-ups: {len(state.powerups)}")
 
-    # ── Alerta de perigo ──
-    danger_blocks = [b for b in state.blocks if b.cy >= cfg.DANGER_ZONE_Y]
-    critical_blocks = [
-        b for b in state.blocks if b.cy >= cfg.WALL_BOTTOM - cfg.BLOCK_SIZE
-    ]
-    if critical_blocks:
-        print(f"  [!!!] CRITICO: {len(critical_blocks)} bloco(s) na ultima fileira!")
-        for b in critical_blocks:
-            print(f"        -> hp={b.hp} em Y={b.cy:.0f}")
-    elif danger_blocks:
-        print(f"  [!] PERIGO: {len(danger_blocks)} bloco(s) na zona baixa")
+    # ── Estado por fileira (Level 1 = topo, Level 7 = fundo/perigo) ──
+    levels_map = {i: [] for i in range(7)}
+    for b in state.blocks:
+        levels_map[b.row_index].append(b)
+
+    for row_idx in range(6, -1, -1):
+        display_level = 7 - row_idx
+        blocks_in_lvl = levels_map[row_idx]
+        if not blocks_in_lvl:
+            continue
+        entries = []
+        for b in blocks_in_lvl:
+            tipo = "Tri" if b.block_type.value == "triangle" else "Bloco"
+            entries.append(f"{tipo} hp={b.hp}")
+        alert = " [!!!] CRITICO" if row_idx == 0 else ""
+        print(f"  Level {display_level}: [{', '.join(entries)}]{alert}")
 
     # ── 2. SIMULAÇÃO ──
     t0 = time.perf_counter()
@@ -124,7 +127,8 @@ def run_turn(
     print(f"  Melhor angulo: {best.angle:.1f}°")
     print(
         f"  Score: {best.score:.0f} (hits={best.total_hits}, "
-        f"destroyed={best.blocks_destroyed}, powerups={best.powerups_collected})"
+        f"destroyed={best.blocks_destroyed}, powerups={best.powerups_collected}, "
+        f"+balls={best.extra_balls_collected})"
     )
     print(f"  Dano por hit: {ball_count}x  |  Simulacao: {sim_time:.2f}s")
 
@@ -145,7 +149,7 @@ def run_turn(
     else:
         print(f"  >> [DRY RUN] Tiro em {best.angle:.1f}° (nao executado)")
 
-    return True, ball_count
+    return True, best.extra_balls_collected
 
 
 def main():
@@ -179,26 +183,29 @@ def main():
 
             print(f"\n--- Turno {turn} ---")
 
-            success, detected_balls = run_turn(
+            status, extra_balls = run_turn(
                 ball_count_override=args.balls,
+                current_ball_count=ball_count,
                 debug=args.debug,
                 dry_run=args.dry_run,
             )
 
-            if success == "game_over":
+            if status == "game_over":
                 print(f"\n{'='*50}")
                 print(f"  GAME OVER — Score final apos {turn - 1} turnos")
                 print(f"  Bolas no ultimo turno: {ball_count}")
                 print(f"{'='*50}")
                 break
 
-            if success:
+            if status:
                 consecutive_fails = 0
-                # --balls override ou deteccao visual
+
+                # Acumula bolas previstas pela simulação
                 if args.balls > 0:
                     ball_count = args.balls
-                else:
-                    ball_count = detected_balls
+                elif extra_balls > 0:
+                    ball_count += extra_balls
+                    print(f"  [+] +{extra_balls} bolas previstas → total: {ball_count}")
 
                 # Espera o turno acabar
                 if args.smart_wait:
@@ -207,6 +214,14 @@ def main():
                 else:
                     print(f"  Aguardando {cfg.TURN_WAIT_TIME}s...")
                     wait_for_turn_end()
+
+                # Recontagem visual pos-turno (bolas agrupadas na base)
+                if args.balls <= 0:
+                    post_frame = capture_screen()
+                    visual_count = count_balls(post_frame)
+                    if visual_count > ball_count:
+                        print(f"  [+] Recontagem visual: {visual_count} bolas")
+                        ball_count = visual_count
             else:
                 consecutive_fails += 1
                 if consecutive_fails >= max_fails:

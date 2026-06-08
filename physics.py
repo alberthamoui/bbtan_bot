@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from typing import List, Tuple, Optional
 
 import config as cfg
-from vision import Block, BlockType, PowerUp, TriangleOrientation
+from vision import Block, BlockType, PowerUp, PowerUpType, TriangleOrientation
 
 # ─────────────────────────────────────────────
 # RESULTADO DA SIMULAÇÃO
@@ -27,10 +27,9 @@ class SimResult:
     score: float  # pontuação total
     total_hits: int  # total de colisões com blocos
     blocks_destroyed: int  # blocos que seriam destruídos
-    powerups_collected: int  # power-ups coletados
-    path: List[Tuple[float, float]] = field(
-        default_factory=list
-    )  # trajetória (para debug)
+    powerups_collected: int  # power-ups coletados (todos os tipos)
+    extra_balls_collected: int = 0  # apenas power-ups do tipo EXTRA_BALL (+)
+    path: List[Tuple[float, float]] = field(default_factory=list)
     hit_details: List[str] = field(default_factory=list)
 
 
@@ -262,21 +261,65 @@ def _collide_powerup(pos: Vec2, radius: float, pu: PowerUp) -> bool:
     return dist < (radius + pu.radius)
 
 
+def _apply_laser(
+    pu: PowerUp,
+    blocks: List[Block],
+    block_hp: dict,
+    ball_count: int,
+) -> Tuple[float, int]:
+    """
+    Efeito do laser (<>): causa ball_count de dano a todos os blocos
+    na mesma linha (Y) e coluna (X) do power-up.
+    Retorna (score_ganho, blocos_destruidos).
+    """
+    score = 0.0
+    destroyed = 0
+    half_cell = cfg.BLOCK_SIZE / 2
+
+    for block in blocks:
+        if block_hp.get(id(block), 0) <= 0:
+            continue
+
+        in_row = abs(block.cy - pu.cy) < half_cell
+        in_col = abs(block.cx - pu.cx) < half_cell
+        if not (in_row or in_col):
+            continue
+
+        block_hp[id(block)] -= ball_count
+        score += cfg.SCORE_HIT_BLOCK * ball_count
+
+        if block.cy >= cfg.DANGER_ZONE_Y:
+            danger_ratio = (block.cy - cfg.DANGER_ZONE_Y) / max(
+                1, cfg.WALL_BOTTOM - cfg.DANGER_ZONE_Y
+            )
+            score += cfg.SCORE_DANGER_HIT * (1 + danger_ratio * 3)
+
+        if block_hp[id(block)] <= 0:
+            destroyed += 1
+            score += cfg.SCORE_DESTROY_BLOCK
+            if block.cy >= cfg.DANGER_ZONE_Y:
+                danger_ratio = (block.cy - cfg.DANGER_ZONE_Y) / max(
+                    1, cfg.WALL_BOTTOM - cfg.DANGER_ZONE_Y
+                )
+                score += cfg.SCORE_DANGER_DESTROY * (1 + danger_ratio * 2)
+
+    return score, destroyed
+
+
 # ─────────────────────────────────────────────
 # MULTIPLICADOR DE PRIORIDADE POR FILEIRA
 # ─────────────────────────────────────────────
 
 
 def get_row_multiplier(block_y: float) -> float:
-    """Retorna o multiplicador de pontuação com base na proximidade do bloco com o chão."""
-    # Percorre a lista de níveis definida no config
+    """Retorna o multiplicador de pontuação com base na fileira do bloco (cfg.LEVELS)."""
+    # Abaixo do último nível = jogo perdido se não destruir
+    if block_y >= cfg.LEVELS[0]:
+        return 30.0
     for idx, row_y in enumerate(cfg.LEVELS):
-        # Se o Y do bloco estiver muito próximo do Y catalogado daquela fileira
-        if abs(block_y - row_y) < 25:  # margem de erro de 25px para detecção do OpenCV
+        if abs(block_y - row_y) < 25:
             return cfg.ROW_MULTIPLIERS.get(idx, 1.0)
-    
-    # Se não bater exatamente com nenhuma fileira conhecida, calcula uma aproximação linear
-    # Quanto maior o Y (mais embaixo), maior o multiplicador padrão
+    # Fallback interpolado por posição
     if block_y > cfg.LEVELS[1]: return 5.0
     if block_y > cfg.LEVELS[3]: return 1.5
     return 1.0
@@ -324,6 +367,7 @@ def simulate_trajectory(
     total_hits = 0
     blocks_destroyed = 0
     powerups_collected = 0
+    extra_balls_collected = 0
     path = []
 
     # Cópia local do HP dos blocos para esta simulação
@@ -442,7 +486,16 @@ def simulate_trajectory(
             if _collide_powerup(pos, radius, pu):
                 collected_pus.add(i)
                 powerups_collected += 1
-                score += cfg.SCORE_HIT_POWERUP
+
+                if pu.power_up_type == PowerUpType.LASER:
+                    laser_score, laser_destroyed = _apply_laser(pu, blocks, block_hp, ball_count)
+                    score += laser_score
+                    blocks_destroyed += laser_destroyed
+                elif pu.power_up_type == PowerUpType.EXTRA_BALL:
+                    extra_balls_collected += 1
+                    score += cfg.SCORE_HIT_POWERUP
+                else:
+                    score += cfg.SCORE_HIT_POWERUP
 
     # Bônus por loop: se bateu muitas vezes em blocos diferentes
     if total_hits > 10:
@@ -454,6 +507,7 @@ def simulate_trajectory(
         total_hits=total_hits,
         blocks_destroyed=blocks_destroyed,
         powerups_collected=powerups_collected,
+        extra_balls_collected=extra_balls_collected,
         path=path if record_path else [],
     )
 

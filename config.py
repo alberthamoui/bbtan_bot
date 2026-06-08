@@ -6,6 +6,9 @@ Use o script calibrate.py (incluso) para descobrir os valores certos.
 """
 
 import numpy as np
+import pytesseract
+
+pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 
 # ─────────────────────────────────────────────
 # REGIÃO DO JOGO NA TELA (x, y, largura, altura)
@@ -19,7 +22,8 @@ WALL_RIGHT = GAME_REGION[2] - 5
 WALL_TOP = 5
 WALL_BOTTOM = GAME_REGION[3] - 10  # acima do robô/bola
 
-LEVELS = [723, 661, 596, 529, 468, 406, 341]
+# Y do centro de cada fileira, relativo ao frame capturado (0 = mais baixa/perigosa)
+LEVELS = [480, 417, 352, 289, 225, 162, 99]
 
 
 # ─────────────────────────────────────────────
@@ -27,17 +31,58 @@ LEVELS = [723, 661, 596, 529, 468, 406, 341]
 # (OpenCV usa H: 0-179, S: 0-255, V: 0-255)
 # ─────────────────────────────────────────────
 
+# --- POWER-UPS ---
+
+# Power-Up Laser Horiz/Vert (<>) — Azul (#008beb)
+POWERUP_LASER_HSV_LOW  = np.array([97, 180, 180])
+POWERUP_LASER_HSV_HIGH = np.array([107, 255, 255])
+
+# Power-Up Bola Extra (+) — Verde Ciano (#00edd3)
+POWERUP_EXTRA_BALL_HSV_LOW  = np.array([81, 180, 180])
+POWERUP_EXTRA_BALL_HSV_HIGH = np.array([91, 255, 255])
+
+# Power-Up Moeda/Bônus B (B) — Amarelo Ouro (#ffd539)
+POWERUP_B_HSV_LOW      = np.array([20, 180, 200])
+POWERUP_B_HSV_HIGH     = np.array([26, 255, 255])
+
+
+# --- BLOCOS (Se você precisar filtrar por cor específica) ---
+
+# Bloco Amarelo (#ffe121)
+BLOCK_YELLOW_HSV_LOW   = np.array([23, 180, 200])
+BLOCK_YELLOW_HSV_HIGH  = np.array([29, 255, 255])
+
+# Bloco Laranja (#ffad21)
+BLOCK_ORANGE_HSV_LOW   = np.array([15, 180, 200])
+BLOCK_ORANGE_HSV_HIGH  = np.array([22, 255, 255])
+
+# Bloco Vermelho (#ff3b21)
+BLOCK_RED_HSV_LOW      = np.array([0, 180, 200])
+BLOCK_RED_HSV_HIGH     = np.array([6, 255, 255])
+
+# Bloco Rosa (#ff2160)
+BLOCK_PINK_HSV_LOW     = np.array([166, 180, 200])
+BLOCK_PINK_HSV_HIGH    = np.array([174, 255, 255])
+
+# Bloco Roxo (#8900ff)
+BLOCK_PURPLE_HSV_LOW   = np.array([131, 180, 200])
+BLOCK_PURPLE_HSV_HIGH  = np.array([141, 255, 255])
+
 # BLOCOS — qualquer coisa colorida e brilhante (exclui fundo escuro)
 BLOCK_HSV_LOW = np.array([0, 80, 100])
 BLOCK_HSV_HIGH = np.array([179, 255, 255])
 
-# POWER-UPS ciano (+)
-POWERUP_HSV_LOW = np.array([80, 100, 150])
-POWERUP_HSV_HIGH = np.array([100, 255, 255])
+# Número de HP — texto branco (quase-branco) sobre fundo colorido
+HP_TEXT_HSV_LOW  = np.array([0,   0,   252])
+HP_TEXT_HSV_HIGH = np.array([175, 255, 255])
+# Alternativa: texto escuro (roxo/azul) sobre fundo claro
+# HP_TEXT_HSV_LOW  = np.array([129, 137, 218])
+# HP_TEXT_HSV_HIGH = np.array([149, 255, 255])
 
 # BOLA branca
 BALL_HSV_LOW = np.array([0, 0, 200])
 BALL_HSV_HIGH = np.array([179, 40, 255])
+
 # Fundo escuro — tudo abaixo desse valor é ignorado
 BG_VALUE_THRESHOLD = 80
 
@@ -83,12 +128,11 @@ SCORE_HIT_POWERUP = 200  # coletar power-up (+)
 SCORE_MULTI_BOUNCE = 5  # bônus por ricochete entre blocos consecutivos
 SCORE_LOOP_BONUS = 100  # bônus se detectar "loop" entre blocos próximos
 
-# Multiplicadores para cada fileira de LEVELS = [723, 661, 596, 529, 468, 406, 341]
-# Index 0 (723) é a última fileira antes do Game Over, ganha peso máximo.
+# Multiplicadores por fileira (índice 0 = mais baixa, LEVELS[0]=480)
 ROW_MULTIPLIERS = {
-    0: 15.0,  # CRÍTICO: Fileira colada no chão (Y=723)
-    1: 5.0,   # ALTO: Segunda fileira de baixo para cima (Y=661)
-    2: 2.5,   # MÉDIO: Terceira fileira (Y=596)
+    0: 15.0,  # CRÍTICO: Fileira colada no chão (Y≈480)
+    1: 5.0,   # ALTO: Segunda fileira (Y≈417)
+    2: 2.5,   # MÉDIO: Terceira fileira (Y≈352)
     3: 1.5,   # NORMAL: Quarta fileira (Y=529)
     4: 1.0,   # PADRÃO: Quinta fileira (Y=468)
     5: 0.8,   # BAIXO: Sexta fileira (Y=406)
