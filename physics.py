@@ -469,6 +469,7 @@ def find_best_angle(
     Returns: (melhor_resultado, lista_todos_resultados)
     """
     all_results: List[SimResult] = []
+    best = None
 
     for angle in range(angle_min, angle_max + 1, angle_step):
         result = simulate_trajectory(
@@ -481,13 +482,10 @@ def find_best_angle(
             record_path=False,
         )
         all_results.append(result)
+        if best is None or result.score > best.score:
+            best = result
 
-    # Ordena por score decrescente
-    all_results.sort(key=lambda r: r.score, reverse=True)
-
-    best = all_results[0]
-
-    # Re-simula o melhor com path para debug
+    # Grava path só do melhor
     best_with_path = simulate_trajectory(
         ball_x,
         ball_y,
@@ -498,6 +496,7 @@ def find_best_angle(
         record_path=True,
     )
 
+    all_results.sort(key=lambda r: r.score, reverse=True)
     return best_with_path, all_results
 
 

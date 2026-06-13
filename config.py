@@ -22,8 +22,16 @@ WALL_RIGHT = GAME_REGION[2] - 5
 WALL_TOP = 5
 WALL_BOTTOM = GAME_REGION[3] - 10  # acima do robô/bola
 
-# Y do centro de cada fileira, relativo ao frame capturado (0 = mais baixa/perigosa)
-LEVELS = [480, 417, 352, 289, 225, 162, 99]
+# Grid do BBTAN: 7 colunas
+GRID_COLUMNS = 7
+BLOCK_SIZE = GAME_REGION[2] // GRID_COLUMNS  # pixels por bloco
+
+# Limites de cada fileira, relativos ao frame capturado (0 = mais baixa/perigosa)
+# Computados a partir de _GRID_TOP_Y e BLOCK_SIZE para cobertura contígua (sem gaps)
+_GRID_TOP_Y = 67  # Y do topo da fileira mais alta (calibrar se mudar GAME_REGION)
+LEVEL_TOPS = [_GRID_TOP_Y + (6 - i) * BLOCK_SIZE for i in range(7)]
+LEVEL_BOTS = [_GRID_TOP_Y + (7 - i) * BLOCK_SIZE - 1 for i in range(7)]
+LEVELS = [(t + b) // 2 for t, b in zip(LEVEL_TOPS, LEVEL_BOTS)]
 
 
 # ─────────────────────────────────────────────
@@ -46,27 +54,20 @@ POWERUP_B_HSV_LOW      = np.array([20, 180, 200])
 POWERUP_B_HSV_HIGH     = np.array([26, 255, 255])
 
 
-# --- BLOCOS (Se você precisar filtrar por cor específica) ---
+# --- BLOCOS POR COR (usado para isolar texto de HP via inversão) ---
 
-# Bloco Amarelo (#ffe121)
-BLOCK_YELLOW_HSV_LOW   = np.array([23, 180, 200])
-BLOCK_YELLOW_HSV_HIGH  = np.array([29, 255, 255])
-
-# Bloco Laranja (#ffad21)
-BLOCK_ORANGE_HSV_LOW   = np.array([15, 180, 200])
-BLOCK_ORANGE_HSV_HIGH  = np.array([22, 255, 255])
-
-# Bloco Vermelho (#ff3b21)
-BLOCK_RED_HSV_LOW      = np.array([0, 180, 200])
-BLOCK_RED_HSV_HIGH     = np.array([6, 255, 255])
-
-# Bloco Rosa (#ff2160)
-BLOCK_PINK_HSV_LOW     = np.array([166, 180, 200])
-BLOCK_PINK_HSV_HIGH    = np.array([174, 255, 255])
-
-# Bloco Roxo (#8900ff)
-BLOCK_PURPLE_HSV_LOW   = np.array([131, 180, 200])
-BLOCK_PURPLE_HSV_HIGH  = np.array([141, 255, 255])
+BLOCK_COLOR_RANGES = [
+    # (nome, low, high)
+    ("roxo",          np.array([126, 200, 150]), np.array([143, 255, 255])),
+    ("vermelho",      np.array([0, 200, 150]),   np.array([9, 255, 255])),
+    ("laranja",       np.array([16, 200, 150]),  np.array([22, 255, 255])),
+    ("magenta",       np.array([144, 180, 120]), np.array([162, 255, 255])),
+    ("amarelo_ouro",  np.array([22, 200, 150]),  np.array([28, 255, 255])),
+    ("laranja_escuro", np.array([9, 200, 150]),  np.array([16, 255, 255])),
+    ("rosa",           np.array([162, 200, 150]), np.array([179, 255, 255])),
+    ("amarelo_ouro",   np.array([22, 200, 150]),  np.array([28, 255, 255])),
+    ("laranja2",       np.array([16, 200, 150]),  np.array([22, 255, 255])),
+]
 
 # BLOCOS — qualquer coisa colorida e brilhante (exclui fundo escuro)
 BLOCK_HSV_LOW = np.array([0, 80, 100])
@@ -83,6 +84,11 @@ HP_TEXT_HSV_HIGH = np.array([175, 255, 255])
 BALL_HSV_LOW = np.array([0, 0, 200])
 BALL_HSV_HIGH = np.array([179, 40, 255])
 
+# Contagem de bolas (OCR) — região absoluta na tela onde aparece "x14", "x1", etc.
+BALL_COUNT_REGION = (1324, 829, 483, 36)
+BALL_COUNT_HSV_LOW  = np.array([0, 0, 200])
+BALL_COUNT_HSV_HIGH = np.array([179, 41, 255])
+
 # Fundo escuro — tudo abaixo desse valor é ignorado
 BG_VALUE_THRESHOLD = 80
 
@@ -90,9 +96,6 @@ BG_VALUE_THRESHOLD = 80
 # DETECÇÃO DE BLOCOS
 # ─────────────────────────────────────────────
 
-# Grid do BBTAN: 7 colunas
-GRID_COLUMNS = 7
-BLOCK_SIZE = GAME_REGION[2] // GRID_COLUMNS  # pixels por bloco
 MIN_BLOCK_AREA = int(BLOCK_SIZE * BLOCK_SIZE * 0.15)  # ~15% da área de 1 bloco
 MAX_BLOCK_AREA = int(BLOCK_SIZE * BLOCK_SIZE * 2.5)  # ~2.5 blocos (margem)
 TRIANGLE_VERTICES = 3

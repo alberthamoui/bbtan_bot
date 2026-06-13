@@ -168,8 +168,8 @@ def _get_triangle_orientation(
 
 def _read_hp_ocr(frame_bgr: np.ndarray, frame_gray: np.ndarray, x: int, y: int, w: int, h: int) -> int:
     """
-    Lê o número de HP do bloco via OCR (pytesseract).
-    Usa máscara HSV para isolar os dígitos pela cor específica do texto.
+    Lê o número de HP do bloco via OCR.
+    Detecta a cor do bloco, inverte a máscara (sobra o texto), OCR.
     Fallback para estimativa se OCR falhar.
     """
     try:
@@ -183,14 +183,27 @@ def _read_hp_ocr(frame_bgr: np.ndarray, frame_gray: np.ndarray, x: int, y: int, 
     if roi_bgr.size == 0 or roi_bgr.shape[0] < 5 or roi_bgr.shape[1] < 5:
         return 1
 
-    # Isola os dígitos pela cor HSV do texto
     hsv = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2HSV)
-    mask = cv2.inRange(hsv, cfg.HP_TEXT_HSV_LOW, cfg.HP_TEXT_HSV_HIGH)
 
-    # Redimensiona para altura fixa (melhora precisão do tesseract)
+    # Descobre qual cor de bloco cobre mais pixels no ROI
+    best_mask = None
+    best_coverage = 0
+    for _name, low, high in cfg.BLOCK_COLOR_RANGES:
+        mask = cv2.inRange(hsv, low, high)
+        coverage = np.count_nonzero(mask)
+        if coverage > best_coverage:
+            best_coverage = coverage
+            best_mask = mask
+
+    if best_mask is None or best_coverage < roi_bgr.shape[0] * roi_bgr.shape[1] * 0.1:
+        return _read_hp_fallback(frame_gray, x, y, w, h)
+
+    # Inverte: pixels do bloco viram preto, texto vira branco
+    text_mask = cv2.bitwise_not(best_mask)
+
     target_h = 40
-    scale = target_h / mask.shape[0]
-    mask_big = cv2.resize(mask, None, fx=scale, fy=scale, interpolation=cv2.INTER_NEAREST)
+    scale = target_h / text_mask.shape[0]
+    mask_big = cv2.resize(text_mask, None, fx=scale, fy=scale, interpolation=cv2.INTER_NEAREST)
 
     # Tesseract prefere texto escuro em fundo branco
     binary = cv2.bitwise_not(mask_big)
@@ -198,7 +211,6 @@ def _read_hp_ocr(frame_bgr: np.ndarray, frame_gray: np.ndarray, x: int, y: int, 
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
     binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
 
-    # Adiciona borda branca (tesseract precisa de margem)
     binary = cv2.copyMakeBorder(binary, 10, 10, 10, 10, cv2.BORDER_CONSTANT, value=255)
 
     config = "--psm 7 -c tessedit_char_whitelist=0123456789"
@@ -233,17 +245,13 @@ def _read_hp_fallback(frame_gray: np.ndarray, x: int, y: int, w: int, h: int) ->
 
 def _get_row_index(cy: float) -> int:
     """
-    Retorna o índice da fileira em cfg.LEVELS mais próxima do bloco.
-    0 = fileira mais baixa (LEVELS[0], maior perigo).
+    Retorna o índice da fileira usando LEVEL_TOPS/LEVEL_BOTS.
+    0 = mais baixa (perigosa), 6 = topo. Retorna -1 se fora de todas as faixas.
     """
-    best_idx = 0
-    best_dist = abs(cy - cfg.LEVELS[0])
-    for i, level_y in enumerate(cfg.LEVELS):
-        dist = abs(cy - level_y)
-        if dist < best_dist:
-            best_dist = dist
-            best_idx = i
-    return best_idx
+    for i in range(len(cfg.LEVEL_TOPS)):
+        if cfg.LEVEL_TOPS[i] <= cy <= cfg.LEVEL_BOTS[i]:
+            return i
+    return -1
 
 
 def detect_blocks(frame: np.ndarray) -> List[Block]:
@@ -268,6 +276,11 @@ def detect_blocks(frame: np.ndarray) -> List[Block]:
             continue
 
         x, y, w, h = cv2.boundingRect(cnt)
+        cy = y + h / 2.0
+
+        row_idx = _get_row_index(cy)
+        if row_idx == -1:
+            continue
 
         # Aproximação poligonal para classificar forma
         peri = cv2.arcLength(cnt, True)
@@ -275,9 +288,6 @@ def detect_blocks(frame: np.ndarray) -> List[Block]:
 
         block_type, tri_orient = _classify_polygon(approx, (x, y, w, h))
         hp = _read_hp_ocr(frame, gray, x, y, w, h)
-
-        cy = y + h / 2.0
-        row_idx = _get_row_index(cy)
 
         block = Block(
             x=x,
@@ -409,6 +419,57 @@ def detect_ball(frame: np.ndarray) -> Optional[Tuple[float, float]]:
     return best
 
 
+def read_ball_count_ocr() -> int:
+    """
+    Lê a contagem de bolas via OCR na região onde aparece "x14", "x1", etc.
+    Captura a região absoluta BALL_COUNT_REGION, aplica máscara HSV e usa Tesseract.
+    Retorna 0 se não conseguir ler (caller decide o fallback).
+    """
+    try:
+        import pytesseract
+    except ImportError:
+        return 0
+
+    rx, ry, rw, rh = cfg.BALL_COUNT_REGION
+    monitor = {"top": ry, "left": rx, "width": rw, "height": rh}
+    raw = _sct.grab(monitor)
+    img = np.array(raw, dtype=np.uint8)[:, :, :3]
+
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    mask = cv2.inRange(hsv, cfg.BALL_COUNT_HSV_LOW, cfg.BALL_COUNT_HSV_HIGH)
+
+    target_h = 64
+    scale = target_h / mask.shape[0]
+    mask_big = cv2.resize(mask, None, fx=scale, fy=scale, interpolation=cv2.INTER_LINEAR)
+    _, mask_big = cv2.threshold(mask_big, 127, 255, cv2.THRESH_BINARY)
+
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
+    mask_big = cv2.dilate(mask_big, kernel, iterations=1)
+
+    binary = cv2.bitwise_not(mask_big)
+    binary = cv2.copyMakeBorder(binary, 15, 15, 15, 15, cv2.BORDER_CONSTANT, value=255)
+
+    config = "--psm 7 -c tessedit_char_whitelist=xX0123456789"
+    try:
+        text = pytesseract.image_to_string(binary, config=config).strip().lower()
+        text = text.replace(" ", "")
+        if "x" in text:
+            num_str = text.split("x")[-1]
+            if num_str.isdigit():
+                val = int(num_str)
+                if 1 <= val <= 9999:
+                    return val
+        digits = "".join(c for c in text if c.isdigit())
+        if digits:
+            val = int(digits)
+            if 1 <= val <= 9999:
+                return val
+    except Exception:
+        pass
+
+    return 0
+
+
 def count_balls(frame: np.ndarray) -> int:
     """
     Conta visualmente quantas bolas brancas estão na base da tela.
@@ -508,7 +569,7 @@ def scan_game() -> GameState:
     blocks = detect_blocks(frame)
     powerups = detect_powerups(frame)
     ball_pos = detect_ball(frame)
-    n_balls = count_balls(frame)
+    n_balls = read_ball_count_ocr()
 
     ball_x = ball_pos[0] if ball_pos else None
     ball_y = ball_pos[1] if ball_pos else None

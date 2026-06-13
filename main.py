@@ -17,13 +17,15 @@ Uso:
 import argparse
 import time
 import sys
+import threading
 import cv2
 
 import config as cfg
-from vision import scan_game, capture_screen, count_balls, GameState
+from vision import scan_game, read_ball_count_ocr, GameState
 from physics import find_best_angle, SimResult
 from executor import execute_shot, wait_for_turn_end, wait_for_turn_end_smart
 from tools.debug_view import draw_trajectory, draw_stats_overlay
+from tools.visualizar_masks import run_masks_window
 
 
 def parse_args():
@@ -62,12 +64,10 @@ def run_turn(
     current_ball_count: int = 1,
     debug: bool = False,
     dry_run: bool = False,
-) -> tuple:
+):
     """
     Executa um turno completo.
-    Retorna (status, extra_balls_predicted)
-    status: True (sucesso), False (falha), "game_over"
-    extra_balls_predicted: power-ups (+) previstos pela simulação
+    Retorna status: True (sucesso), False (falha), "game_over"
     """
     # ── 1. CAPTURA E DETECÇÃO ──
     state = scan_game()
@@ -76,22 +76,24 @@ def run_turn(
         print(
             f"  [GAME OVER] Tela branca detectada ({state.white_ratio:.0%}) — parando bot"
         )
-        return "game_over", 0
+        return "game_over"
 
     if state.ball_x is None:
         print("  [!] Bola nao encontrada — pulando turno")
-        return False, 0
+        return False
 
     if not state.blocks:
         print("  [!] Nenhum bloco detectado — possivelmente entre turnos")
-        return False, 0
+        return False
 
     ball_x = state.ball_x
     ball_y = state.ball_y
     if ball_count_override > 0:
         ball_count = ball_count_override
+    elif state.detected_ball_count > 0:
+        ball_count = state.detected_ball_count
     else:
-        ball_count = max(state.detected_ball_count, current_ball_count)
+        ball_count = current_ball_count
 
     print(f"  Bola: ({ball_x:.0f}, {ball_y:.0f})  |  Bolas: {ball_count}")
     print(f"  Blocos: {len(state.blocks)}  |  Power-ups: {len(state.powerups)}")
@@ -149,7 +151,10 @@ def run_turn(
     else:
         print(f"  >> [DRY RUN] Tiro em {best.angle:.1f}° (nao executado)")
 
-    return True, best.extra_balls_collected
+    block_fingerprint = frozenset(
+        (b.row_index, round(b.cx / cfg.BLOCK_SIZE)) for b in state.blocks
+    )
+    return block_fingerprint
 
 
 def main():
@@ -165,6 +170,10 @@ def main():
     print("=" * 50)
     print()
 
+    masks_stop = threading.Event()
+    masks_thread = threading.Thread(target=run_masks_window, args=(masks_stop,), daemon=True)
+    masks_thread.start()
+
     if args.delay > 0:
         print(f"Iniciando em {args.delay:.0f}s — posicione o jogo!")
         time.sleep(args.delay)
@@ -173,6 +182,9 @@ def main():
     ball_count = 1
     consecutive_fails = 0
     max_fails = 5
+    last_block_fingerprint = None
+    stale_turns = 0
+    max_stale_turns = 20
 
     try:
         while True:
@@ -183,7 +195,7 @@ def main():
 
             print(f"\n--- Turno {turn} ---")
 
-            status, extra_balls = run_turn(
+            status = run_turn(
                 ball_count_override=args.balls,
                 current_ball_count=ball_count,
                 debug=args.debug,
@@ -191,21 +203,53 @@ def main():
             )
 
             if status == "game_over":
+                turnos_sobrevividos = turn - 1
                 print(f"\n{'='*50}")
-                print(f"  GAME OVER — Score final apos {turn - 1} turnos")
+                print(f"  GAME OVER — Score final apos {turnos_sobrevividos} turnos")
                 print(f"  Bolas no ultimo turno: {ball_count}")
                 print(f"{'='*50}")
-                break
+
+                from datetime import datetime
+                with open("historico.txt", "a", encoding="utf-8") as f:
+                    f.write(f"{datetime.now():%Y-%m-%d %H:%M:%S} | Turnos: {turnos_sobrevividos} | Bolas: {ball_count}\n")
+
+                if not args.dry_run:
+                    import pyautogui
+                    for i in range(3):
+                        print(f"  >> Clique restart {i+1}/3...")
+                        pyautogui.click(1576, 781)
+                        time.sleep(1)
+                        pyautogui.click(1584, 838)
+                        if i < 2:
+                            time.sleep(8)
+
+                turn = 0
+                ball_count = 1
+                consecutive_fails = 0
+                last_block_fingerprint = None
+                stale_turns = 0
+                print("\n  Recomecando do zero!\n")
+                continue
 
             if status:
                 consecutive_fails = 0
 
-                # Acumula bolas previstas pela simulação
+                # Detecta jogo travado (blocos na mesma posicao por N turnos)
+                if status == last_block_fingerprint:
+                    stale_turns += 1
+                else:
+                    stale_turns = 0
+                    last_block_fingerprint = status
+
+                if stale_turns >= max_stale_turns:
+                    print(f"\n  [!] Blocos na mesma posicao por {max_stale_turns} turnos — clicando para destravar bolas")
+                    if not args.dry_run:
+                        import pyautogui
+                        pyautogui.click(1580, 961)
+                    stale_turns = 0
+
                 if args.balls > 0:
                     ball_count = args.balls
-                elif extra_balls > 0:
-                    ball_count += extra_balls
-                    print(f"  [+] +{extra_balls} bolas previstas → total: {ball_count}")
 
                 # Espera o turno acabar
                 if args.smart_wait:
@@ -215,13 +259,14 @@ def main():
                     print(f"  Aguardando {cfg.TURN_WAIT_TIME}s...")
                     wait_for_turn_end()
 
-                # Recontagem visual pos-turno (bolas agrupadas na base)
+                # Recontagem pos-turno via OCR (BALL_COUNT_REGION)
                 if args.balls <= 0:
-                    post_frame = capture_screen()
-                    visual_count = count_balls(post_frame)
-                    if visual_count > ball_count:
-                        print(f"  [+] Recontagem visual: {visual_count} bolas")
-                        ball_count = visual_count
+                    ocr_count = read_ball_count_ocr()
+                    if ocr_count > 0:
+                        ball_count = ocr_count
+                        print(f"  [i] Bolas: {ball_count} (ocr)")
+                    else:
+                        print(f"  [i] Bolas: {ball_count} (ocr falhou, mantendo anterior)")
             else:
                 consecutive_fails += 1
                 if consecutive_fails >= max_fails:
@@ -236,6 +281,8 @@ def main():
         print("\n\nBot parado pelo usuario (Ctrl+C)")
 
     finally:
+        masks_stop.set()
+        masks_thread.join(timeout=2)
         if args.debug:
             cv2.destroyAllWindows()
 
