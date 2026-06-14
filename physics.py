@@ -24,11 +24,12 @@ class SimResult:
     """Resultado de uma simulação de trajetória."""
 
     angle: float  # ângulo testado em graus
-    score: float  # pontuação total
+    score: float  # pontuação total (display apenas)
     total_hits: int  # total de colisões com blocos
     blocks_destroyed: int  # blocos que seriam destruídos
     powerups_collected: int  # power-ups coletados (todos os tipos)
     extra_balls_collected: int = 0  # apenas power-ups do tipo EXTRA_BALL (+)
+    critical_hits: int = 0  # colisões em blocos das rows 0 ou 1 (últimas 2 linhas)
     path: List[Tuple[float, float]] = field(default_factory=list)
     hit_details: List[str] = field(default_factory=list)
 
@@ -127,52 +128,6 @@ def _collide_aabb(
         inv_dist = 1.0 / math.sqrt(dist_sq)
         return Vec2(dx * inv_dist, dy * inv_dist)
 
-
-# ─────────────────────────────────────────────
-# COLISÃO AABBx2 (blocos quadrados grandes)
-# ─────────────────────────────────────────────
-
-def _collide_aabb2(
-    pos: Vec2, vel: Vec2, radius: float, bx: int, by: int, bw: int, bh: int
-) -> Optional[Vec2]:
-    """
-    Verifica colisão círculo vs AABB.
-    Retorna a normal de reflexão ou None se não colidir.
-    """
-    # Ponto mais próximo do centro da bola no retângulo
-    closest_x = max(bx, min(pos.x, bx + bw))
-    closest_y = max(by, min(pos.y, by + bh))
-
-    dx = pos.x - closest_x
-    dy = pos.y - closest_y
-    dist_sq = dx * dx + dy * dy
-
-    if dist_sq >= radius * radius:
-        return None  # sem colisão
-
-    # Determina qual face foi atingida baseado na penetração
-    # Calcula overlap em cada eixo
-    overlap_left = (pos.x + radius) - bx
-    overlap_right = (bx + bw) - (pos.x - radius)
-    overlap_top = (pos.y + radius) - by
-    overlap_bottom = (by + bh) - (pos.y - radius)
-
-    min_overlap = min(overlap_left, overlap_right, overlap_top, overlap_bottom)
-
-    if min_overlap == overlap_left and vel.x > 0:
-        return Vec2(-1, 0)  # bateu na face esquerda
-    elif min_overlap == overlap_right and vel.x < 0:
-        return Vec2(1, 0)  # bateu na face direita
-    elif min_overlap == overlap_top and vel.y > 0:
-        return Vec2(0, -1)  # bateu no topo
-    elif min_overlap == overlap_bottom and vel.y < 0:
-        return Vec2(0, 1)  # bateu na base
-    else:
-        # Fallback: normal baseada na direção do centro
-        if dist_sq < 1e-8:
-            return Vec2(0, -1)
-        inv_dist = 1.0 / math.sqrt(dist_sq)
-        return Vec2(dx * inv_dist, dy * inv_dist)
 
 
 # ─────────────────────────────────────────────
@@ -319,6 +274,7 @@ def simulate_trajectory(
     # Estado da simulação
     score = 0.0
     total_hits = 0
+    critical_hits = 0  # contatos em rows 0 ou 1 (últimas 2 linhas)
     blocks_destroyed = 0
     powerups_collected = 0
     extra_balls_collected = 0
@@ -376,8 +332,8 @@ def simulate_trajectory(
             # Escolhe método de colisão baseado no tipo
             if block.block_type == BlockType.TRIANGLE:
                 normal = _collide_triangle(pos, vel, radius, block)
-            elif block.w > cfg.BLOCK_SIZE * 1.5:  # Identifica se é o bloco grandão pela largura
-                normal = _collide_aabb2(pos, vel, radius, block.x, block.y, block.w, block.h)
+            elif block.w > cfg.BLOCK_SIZE * 1.5:
+                normal = _collide_aabb(pos, vel, radius, block.x, block.y, block.w, block.h)
             else:
                 normal = _collide_aabb(pos, vel, radius, block.x, block.y, block.w, block.h)
 
@@ -390,13 +346,15 @@ def simulate_trajectory(
                 # Empurra a bola pra fora do bloco
                 pos = pos + normal * (radius * 0.5)
 
-                # Dano = ball_count (todas as bolas batem nesse ponto)
-                damage = ball_count
-                block_hp[id(block)] -= damage
+                # Só conta o dano efetivo (evita inflar score por overkill)
+                effective_damage = min(ball_count, block_hp[id(block)])
+                block_hp[id(block)] -= ball_count
                 total_hits += 1
+                if block.row_index in (0, 1):
+                    critical_hits += 1
 
                 row_mult = cfg.ROW_MULTIPLIERS.get(block.row_index, 1.0)
-                score += cfg.SCORE_HIT_BLOCK * ball_count * row_mult
+                score += cfg.SCORE_HIT_BLOCK * effective_damage * row_mult
 
                 # Multi-bounce bonus
                 bid = id(block)
@@ -433,6 +391,14 @@ def simulate_trajectory(
                 else:
                     score += cfg.SCORE_HIT_POWERUP
 
+    # Penalidade por blocos da row 0 que sobreviveram à simulação
+    block_by_id = {id(b): b for b in blocks}
+    for bid, remaining_hp in block_hp.items():
+        if remaining_hp > 0:
+            b = block_by_id.get(bid)
+            if b is not None and b.row_index == 0:
+                score -= cfg.SCORE_ROW0_SURVIVE_PENALTY * remaining_hp
+
     # Bônus por loop: se bateu muitas vezes em blocos diferentes
     if total_hits > 10:
         score += cfg.SCORE_LOOP_BONUS * (total_hits // 10)
@@ -441,6 +407,7 @@ def simulate_trajectory(
         angle=angle_deg,
         score=score,
         total_hits=total_hits,
+        critical_hits=critical_hits,
         blocks_destroyed=blocks_destroyed,
         powerups_collected=powerups_collected,
         extra_balls_collected=extra_balls_collected,
@@ -464,39 +431,52 @@ def find_best_angle(
     angle_step: int = cfg.ANGLE_STEP,
 ) -> Tuple[SimResult, List[SimResult]]:
     """
-    Testa todos os ângulos no range e retorna o melhor.
+    Busca em dois passos: coarse (5°) para identificar regiões promissoras,
+    depois fine (angle_step) ao redor dos top candidatos.
     ball_count: número de bolas atual (afeta dano por colisão).
     Returns: (melhor_resultado, lista_todos_resultados)
     """
-    all_results: List[SimResult] = []
-    best = None
+    _COARSE_STEP = 5
+    _FINE_RANGE = 5   # ±5° ao redor de cada candidato
+    _TOP_K = 5
 
-    for angle in range(angle_min, angle_max + 1, angle_step):
-        result = simulate_trajectory(
-            ball_x,
-            ball_y,
-            float(angle),
-            blocks,
-            powerups,
-            ball_count=ball_count,
-            record_path=False,
+    def _sim(angle: float) -> SimResult:
+        return simulate_trajectory(
+            ball_x, ball_y, angle, blocks, powerups,
+            ball_count=ball_count, record_path=False,
         )
-        all_results.append(result)
-        if best is None or result.score > best.score:
-            best = result
 
-    # Grava path só do melhor
+    # Passo 1: varredura grossa
+    results_by_angle: dict = {}
+    for a in range(angle_min, angle_max + 1, _COARSE_STEP):
+        results_by_angle[a] = _sim(float(a))
+
+    # Top K candidatos pelo score coarse
+    top_coarse = sorted(results_by_angle.values(), key=lambda r: r.score, reverse=True)[:_TOP_K]
+
+    # Passo 2: refinamento fino ao redor dos candidatos
+    for candidate in top_coarse:
+        base = int(candidate.angle)
+        fine_min = max(angle_min, base - _FINE_RANGE)
+        fine_max = min(angle_max, base + _FINE_RANGE)
+        for a in range(fine_min, fine_max + 1, angle_step):
+            if a not in results_by_angle:
+                results_by_angle[a] = _sim(float(a))
+
+    # Ranking: 1º contatos nas últimas 2 linhas, 2º total de contatos
+    all_results = sorted(
+        results_by_angle.values(),
+        key=lambda r: (r.critical_hits, r.total_hits),
+        reverse=True,
+    )
+    best = all_results[0]
+
+    # Re-simula o melhor gravando o caminho
     best_with_path = simulate_trajectory(
-        ball_x,
-        ball_y,
-        best.angle,
-        blocks,
-        powerups,
-        ball_count=ball_count,
-        record_path=True,
+        ball_x, ball_y, best.angle, blocks, powerups,
+        ball_count=ball_count, record_path=True,
     )
 
-    all_results.sort(key=lambda r: r.score, reverse=True)
     return best_with_path, all_results
 
 

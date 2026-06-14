@@ -6,9 +6,6 @@ Use o script calibrate.py (incluso) para descobrir os valores certos.
 """
 
 import numpy as np
-import pytesseract
-
-pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 
 # ─────────────────────────────────────────────
 # REGIÃO DO JOGO NA TELA (x, y, largura, altura)
@@ -96,8 +93,8 @@ BG_VALUE_THRESHOLD = 80
 # DETECÇÃO DE BLOCOS
 # ─────────────────────────────────────────────
 
-MIN_BLOCK_AREA = int(BLOCK_SIZE * BLOCK_SIZE * 0.15)  # ~15% da área de 1 bloco
-MAX_BLOCK_AREA = int(BLOCK_SIZE * BLOCK_SIZE * 2.5)  # ~2.5 blocos (margem)
+MIN_BLOCK_AREA = int(BLOCK_SIZE * BLOCK_SIZE * 0.15)  # ~15% da área de 1 bloco (triangulo ~50%)
+MAX_BLOCK_AREA = int(BLOCK_SIZE * BLOCK_SIZE * 4.5)  # bloco grande 2x2 (4x) + margem morfológica
 TRIANGLE_VERTICES = 3
 SQUARE_VERTICES = 4
 POLY_APPROX_FACTOR = 0.04  # fator do approxPolyDP
@@ -130,6 +127,7 @@ SCORE_DESTROY_BLOCK = 50  # bloco destruído (hp <= 0)
 SCORE_HIT_POWERUP = 200  # coletar power-up (+)
 SCORE_MULTI_BOUNCE = 5  # bônus por ricochete entre blocos consecutivos
 SCORE_LOOP_BONUS = 100  # bônus se detectar "loop" entre blocos próximos
+SCORE_ROW0_SURVIVE_PENALTY = 100  # penalidade por HP restante em blocos da row 0 após simulação
 
 # Multiplicadores por fileira (índice 0 = mais baixa, LEVELS[0]=480)
 ROW_MULTIPLIERS = {
@@ -160,7 +158,8 @@ ANGLE_STEP = 1  # resolução da busca (1° = 160 simulações)
 # ─────────────────────────────────────────────
 DRAG_DISTANCE = 150  # distância do arrasto em pixels
 DRAG_DURATION = 0.15  # segundos do gesto de arrasto
-TURN_WAIT_TIME = 3.5  # segundos entre turnos (ajustar conforme velocidade)
+TURN_WAIT_TIME = 3.5   # segundos aguardando as bolas pararem após o disparo
+PRESCAN_DELAY = 6.0    # segundos extras após OCR antes do próximo scan (blocos descendo)
 CONFIDENCE = 0.8  # confiança mínima para template matching (se usar)
 
 # Botão de acelerar (coordenadas absolutas na tela)

@@ -21,7 +21,7 @@ import threading
 import cv2
 
 import config as cfg
-from vision import scan_game, read_ball_count_ocr, GameState
+from vision import scan_game, GameState
 from physics import find_best_angle, SimResult
 from executor import execute_shot, wait_for_turn_end, wait_for_turn_end_smart
 from tools.debug_view import draw_trajectory, draw_stats_overlay
@@ -128,9 +128,11 @@ def run_turn(
 
     print(f"  Melhor angulo: {best.angle:.1f}°")
     print(
-        f"  Score: {best.score:.0f} (hits={best.total_hits}, "
-        f"destroyed={best.blocks_destroyed}, powerups={best.powerups_collected}, "
-        f"+balls={best.extra_balls_collected})"
+        f"  Criticos (rows 0-1): {best.critical_hits}  |  Total hits: {best.total_hits}"
+    )
+    print(
+        f"  Score: {best.score:.0f} (destroyed={best.blocks_destroyed}, "
+        f"powerups={best.powerups_collected}, +balls={best.extra_balls_collected})"
     )
     print(f"  Dano por hit: {ball_count}x  |  Simulacao: {sim_time:.2f}s")
 
@@ -259,14 +261,9 @@ def main():
                     print(f"  Aguardando {cfg.TURN_WAIT_TIME}s...")
                     wait_for_turn_end()
 
-                # Recontagem pos-turno via OCR (BALL_COUNT_REGION)
-                if args.balls <= 0:
-                    ocr_count = read_ball_count_ocr()
-                    if ocr_count > 0:
-                        ball_count = ocr_count
-                        print(f"  [i] Bolas: {ball_count} (ocr)")
-                    else:
-                        print(f"  [i] Bolas: {ball_count} (ocr falhou, mantendo anterior)")
+                # Aguarda blocos pararem antes do proximo scan
+                print(f"  Aguardando {cfg.PRESCAN_DELAY}s para blocos estabilizarem...")
+                time.sleep(cfg.PRESCAN_DELAY)
             else:
                 consecutive_fails += 1
                 if consecutive_fails >= max_fails:

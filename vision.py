@@ -60,7 +60,8 @@ class Block:
     hp: int = 1  # hit points estimado (via OCR básico)
     vertices: np.ndarray = field(default_factory=lambda: np.array([]))
     tri_orientation: TriangleOrientation = TriangleOrientation.UNKNOWN
-    row_index: int = -1  # índice em cfg.LEVELS (0=mais baixo/perigoso, -1=desconhecido)
+    row_index: int = -1   # 0 = mais baixa (perigosa), 6 = topo; -1 = desconhecido
+    col_index: int = -1   # 0 = coluna mais à esquerda, 6 = mais à direita; -1 = desconhecido
 
     @property
     def rect(self) -> Tuple[int, int, int, int]:
@@ -120,25 +121,24 @@ def capture_screen() -> np.ndarray:
 
 
 def _classify_polygon(
-    approx: np.ndarray, bbox: Tuple[int, int, int, int]
+    cnt: np.ndarray,
+    approx: np.ndarray,
+    bbox: Tuple[int, int, int, int],
 ) -> Tuple[BlockType, TriangleOrientation]:
-    """Classifica o polígono como quadrado ou triângulo e determina orientação."""
-    n_vertices = len(approx)
+    """
+    Usa a área do convex hull (não do contorno bruto) para classificar.
+    O hull ignora buracos do texto HP dentro do bloco, evitando falsos triângulos.
+      - hull_fill ~0.45-0.55  →  triângulo (ocupa metade da bbox)
+      - hull_fill ~0.85-1.00  →  quadrado/bloco grande
+    Threshold em 0.70 deixa margem confortável entre os dois grupos.
+    """
+    x, y, w, h = bbox
+    hull_area = cv2.contourArea(cv2.convexHull(cnt))
+    hull_fill = hull_area / max(w * h, 1)
 
-    if n_vertices == cfg.TRIANGLE_VERTICES:
-        orientation = _get_triangle_orientation(approx, bbox)
-        return BlockType.TRIANGLE, orientation
-
-    elif n_vertices == cfg.SQUARE_VERTICES:
-        return BlockType.SQUARE, TriangleOrientation.UNKNOWN
-
-    else:
-        # Se tem muitos vértices mas é retangular, ainda é quadrado
-        x, y, w, h = bbox
-        aspect = w / max(h, 1)
-        if 0.7 < aspect < 1.4:
-            return BlockType.SQUARE, TriangleOrientation.UNKNOWN
-        return BlockType.UNKNOWN, TriangleOrientation.UNKNOWN
+    if hull_fill < 0.70:
+        return BlockType.TRIANGLE, _get_triangle_orientation(approx, bbox)
+    return BlockType.SQUARE, TriangleOrientation.UNKNOWN
 
 
 def _get_triangle_orientation(
@@ -166,81 +166,60 @@ def _get_triangle_orientation(
         return TriangleOrientation.BOTTOM_RIGHT
 
 
-def _read_hp_ocr(frame_bgr: np.ndarray, frame_gray: np.ndarray, x: int, y: int, w: int, h: int) -> int:
+def _read_hp(frame_bgr: np.ndarray, x: int, y: int, w: int, h: int) -> int:
     """
-    Lê o número de HP do bloco via OCR.
-    Detecta a cor do bloco, inverte a máscara (sobra o texto), OCR.
-    Fallback para estimativa se OCR falhar.
+    Estima HP do bloco sem OCR.
+
+    Pipeline:
+      1. Recorta o interior do bloco (remove ~1/6 das bordas)
+      2. Aplica máscara HSV para isolar o texto branco (HP_TEXT_HSV_LOW/HIGH)
+      3. MORPH_OPEN para remover ruído de pixels isolados
+      4. Conta componentes conexos significativos — cada dígito forma ~1 blob
+      5. Mapeia contagem de blobs → HP representativo da faixa de dígitos
+
+    Retorna o valor representativo do meio de cada faixa (5, 50, 500, 5000).
+    A ordem de grandeza correta é suficiente para a simulação de trajetória.
     """
-    try:
-        import pytesseract
-    except ImportError:
-        return _read_hp_fallback(frame_gray, x, y, w, h)
+    pad_x = max(2, w // 6)
+    pad_y = max(2, h // 6)
+    x1, y1 = x + pad_x, y + pad_y
+    x2, y2 = x + w - pad_x, y + h - pad_y
 
-    pad_x, pad_y = w // 5, h // 5
-    roi_bgr = frame_bgr[y + pad_y : y + h - pad_y, x + pad_x : x + w - pad_x]
-
-    if roi_bgr.size == 0 or roi_bgr.shape[0] < 5 or roi_bgr.shape[1] < 5:
+    if x2 <= x1 or y2 <= y1:
         return 1
 
-    hsv = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2HSV)
+    roi = frame_bgr[y1:y2, x1:x2]
+    if roi.size == 0 or roi.shape[0] < 4 or roi.shape[1] < 4:
+        return 1
 
-    # Descobre qual cor de bloco cobre mais pixels no ROI
-    best_mask = None
-    best_coverage = 0
-    for _name, low, high in cfg.BLOCK_COLOR_RANGES:
-        mask = cv2.inRange(hsv, low, high)
-        coverage = np.count_nonzero(mask)
-        if coverage > best_coverage:
-            best_coverage = coverage
-            best_mask = mask
-
-    if best_mask is None or best_coverage < roi_bgr.shape[0] * roi_bgr.shape[1] * 0.1:
-        return _read_hp_fallback(frame_gray, x, y, w, h)
-
-    # Inverte: pixels do bloco viram preto, texto vira branco
-    text_mask = cv2.bitwise_not(best_mask)
-
-    target_h = 40
-    scale = target_h / text_mask.shape[0]
-    mask_big = cv2.resize(text_mask, None, fx=scale, fy=scale, interpolation=cv2.INTER_NEAREST)
-
-    # Tesseract prefere texto escuro em fundo branco
-    binary = cv2.bitwise_not(mask_big)
+    hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+    text_mask = cv2.inRange(hsv, cfg.HP_TEXT_HSV_LOW, cfg.HP_TEXT_HSV_HIGH)
 
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
-    binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
+    text_mask = cv2.morphologyEx(text_mask, cv2.MORPH_OPEN, kernel)
 
-    binary = cv2.copyMakeBorder(binary, 10, 10, 10, 10, cv2.BORDER_CONSTANT, value=255)
-
-    config = "--psm 7 -c tessedit_char_whitelist=0123456789"
-    try:
-        text = pytesseract.image_to_string(binary, config=config).strip()
-        if text and text.isdigit():
-            hp = int(text)
-            if 1 <= hp <= 9999:
-                return hp
-    except Exception:
-        pass
-
-    return _read_hp_fallback(frame_gray, x, y, w, h)
-
-
-def _read_hp_fallback(frame_gray: np.ndarray, x: int, y: int, w: int, h: int) -> int:
-    """
-    Fallback: estimativa de HP por contagem de componentes conexos.
-    Usado se pytesseract não está instalado ou falhou.
-    """
-    pad_x, pad_y = w // 4, h // 4
-    roi = frame_gray[y + pad_y : y + h - pad_y, x + pad_x : x + w - pad_x]
-
-    if roi.size == 0:
+    if np.count_nonzero(text_mask) < 5:
         return 1
 
-    _, binary = cv2.threshold(roi, 100, 255, cv2.THRESH_BINARY_INV)
-    n_labels, _ = cv2.connectedComponents(binary)
-    hp = max(1, n_labels - 1)
-    return min(hp, 99)
+    n_labels, _, stats, _ = cv2.connectedComponentsWithStats(text_mask, connectivity=8)
+
+    # Área mínima: 1% da ROI, nunca menos de 3 px
+    min_area = max(3, (x2 - x1) * (y2 - y1) // 100)
+    significant = sum(
+        1 for i in range(1, n_labels)
+        if stats[i, cv2.CC_STAT_AREA] >= min_area
+    )
+
+    if significant <= 0:
+        return 1
+    elif significant == 1:
+        return 5       # 1 dígito  → faixa 1–9
+    elif significant == 2:
+        return 50      # 2 dígitos → faixa 10–99
+    elif significant == 3:
+        return 500     # 3 dígitos → faixa 100–999
+    else:
+        return 5000    # 4+ dígitos → faixa 1000–9999
 
 
 def _get_row_index(cy: float) -> int:
@@ -257,7 +236,6 @@ def _get_row_index(cy: float) -> int:
 def detect_blocks(frame: np.ndarray) -> List[Block]:
     """Detecta todos os blocos coloridos no frame."""
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
     # Máscara para blocos laranja
     mask = cv2.inRange(hsv, cfg.BLOCK_HSV_LOW, cfg.BLOCK_HSV_HIGH)
@@ -276,18 +254,36 @@ def detect_blocks(frame: np.ndarray) -> List[Block]:
             continue
 
         x, y, w, h = cv2.boundingRect(cnt)
+
+        # Aceita apenas 1×1 (padrão/triângulo) ou 2×2 (bloco grande).
+        # Nenhum objeto ocupa mais de 1 célula em qualquer eixo exceto o 2×2.
+        bs = cfg.BLOCK_SIZE
+        is_large = w > bs * 1.5 and h > bs * 1.5
+        is_normal = w <= bs * 1.25 and h <= bs * 1.25
+        if not is_large and not is_normal:
+            continue
+
+        # Bloco 2×2 real tem área ~4× o padrão; dois blocos adjacentes que
+        # se fundiram têm área ~2× — rejeita fusões falsas.
+        if is_large and area < bs * bs * 3.0:
+            continue
+
         cy = y + h / 2.0
 
         row_idx = _get_row_index(cy)
         if row_idx == -1:
             continue
 
+        # Coluna pelo canto esquerdo do bbox (mais estável que o centro para 2×2)
+        col_idx = round((x - cfg.WALL_LEFT) / cfg.BLOCK_SIZE)
+        col_idx = max(0, min(cfg.GRID_COLUMNS - 1, col_idx))
+
         # Aproximação poligonal para classificar forma
         peri = cv2.arcLength(cnt, True)
         approx = cv2.approxPolyDP(cnt, cfg.POLY_APPROX_FACTOR * peri, True)
 
-        block_type, tri_orient = _classify_polygon(approx, (x, y, w, h))
-        hp = _read_hp_ocr(frame, gray, x, y, w, h)
+        block_type, tri_orient = _classify_polygon(cnt, approx, (x, y, w, h))
+        hp = _read_hp(frame, x, y, w, h)
 
         block = Block(
             x=x,
@@ -301,6 +297,7 @@ def detect_blocks(frame: np.ndarray) -> List[Block]:
             vertices=approx.reshape(-1, 2),
             tri_orientation=tri_orient,
             row_index=row_idx,
+            col_index=col_idx,
         )
         blocks.append(block)
 
@@ -419,56 +416,6 @@ def detect_ball(frame: np.ndarray) -> Optional[Tuple[float, float]]:
     return best
 
 
-def read_ball_count_ocr() -> int:
-    """
-    Lê a contagem de bolas via OCR na região onde aparece "x14", "x1", etc.
-    Captura a região absoluta BALL_COUNT_REGION, aplica máscara HSV e usa Tesseract.
-    Retorna 0 se não conseguir ler (caller decide o fallback).
-    """
-    try:
-        import pytesseract
-    except ImportError:
-        return 0
-
-    rx, ry, rw, rh = cfg.BALL_COUNT_REGION
-    monitor = {"top": ry, "left": rx, "width": rw, "height": rh}
-    raw = _sct.grab(monitor)
-    img = np.array(raw, dtype=np.uint8)[:, :, :3]
-
-    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-    mask = cv2.inRange(hsv, cfg.BALL_COUNT_HSV_LOW, cfg.BALL_COUNT_HSV_HIGH)
-
-    target_h = 64
-    scale = target_h / mask.shape[0]
-    mask_big = cv2.resize(mask, None, fx=scale, fy=scale, interpolation=cv2.INTER_LINEAR)
-    _, mask_big = cv2.threshold(mask_big, 127, 255, cv2.THRESH_BINARY)
-
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
-    mask_big = cv2.dilate(mask_big, kernel, iterations=1)
-
-    binary = cv2.bitwise_not(mask_big)
-    binary = cv2.copyMakeBorder(binary, 15, 15, 15, 15, cv2.BORDER_CONSTANT, value=255)
-
-    config = "--psm 7 -c tessedit_char_whitelist=xX0123456789"
-    try:
-        text = pytesseract.image_to_string(binary, config=config).strip().lower()
-        text = text.replace(" ", "")
-        if "x" in text:
-            num_str = text.split("x")[-1]
-            if num_str.isdigit():
-                val = int(num_str)
-                if 1 <= val <= 9999:
-                    return val
-        digits = "".join(c for c in text if c.isdigit())
-        if digits:
-            val = int(digits)
-            if 1 <= val <= 9999:
-                return val
-    except Exception:
-        pass
-
-    return 0
-
 
 def count_balls(frame: np.ndarray) -> int:
     """
@@ -569,7 +516,7 @@ def scan_game() -> GameState:
     blocks = detect_blocks(frame)
     powerups = detect_powerups(frame)
     ball_pos = detect_ball(frame)
-    n_balls = read_ball_count_ocr()
+    n_balls = count_balls(frame)
 
     ball_x = ball_pos[0] if ball_pos else None
     ball_y = ball_pos[1] if ball_pos else None
@@ -577,12 +524,25 @@ def scan_game() -> GameState:
     # Frame de debug com anotações
     debug = frame.copy()
     for b in blocks:
-        color = (0, 255, 0) if b.block_type == BlockType.SQUARE else (0, 255, 255)
+        is_large = b.w > cfg.BLOCK_SIZE * 1.5
+        if b.block_type == BlockType.TRIANGLE:
+            color = (0, 0, 255)     # vermelho
+            tipo = "TRI"
+        elif is_large:
+            color = (0, 255, 0)     # verde
+            tipo = "GRANDE"
+        else:
+            color = (255, 0, 0)     # azul
+            tipo = "BLK"
         cv2.rectangle(debug, (b.x, b.y), (b.x + b.w, b.y + b.h), color, 2)
-        label = f"{b.block_type.value} hp={b.hp}"
-        cv2.putText(
-            debug, label, (b.x, b.y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1
-        )
+        label = f"{tipo} hp={b.hp} L{7 - b.row_index}C{b.col_index}"
+        cx_label = b.x + b.w // 2
+        cy_label = b.y + b.h // 2
+        (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.35, 1)
+        cv2.putText(debug, label, (cx_label - tw // 2, cy_label + th // 2),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 0, 0), 2)
+        cv2.putText(debug, label, (cx_label - tw // 2, cy_label + th // 2),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.35, color, 1)
 
     _POWERUP_DEBUG_LABEL = {
         PowerUpType.EXTRA_BALL: "+",
