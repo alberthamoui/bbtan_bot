@@ -111,8 +111,8 @@ EXPECTED_BLOCK_SIZE = BLOCK_SIZE
 # BALL_RADIUS   = max(3, int(BLOCK_SIZE * 0.22))  # pixels
 
 # Raio da bola = 1.77mm. Bloco = 8mm → fator = 1.77/8 ≈ 0.22
-# BALL_RADIUS = max(3, int(BLOCK_SIZE * 0.50))  # antigo: raio 4mm
-BALL_RADIUS = max(3, int(BLOCK_SIZE * 0.22))
+BALL_RADIUS = max(3, int(BLOCK_SIZE * 0.50))  # antigo: raio 4mm
+# BALL_RADIUS = max(3, int(BLOCK_SIZE * 0.22))
 
 BALL_SPEED = 8.0  # pixels por step da simulação
 MAX_SIM_STEPS = 2000  # limite de passos por simulação de ângulo
