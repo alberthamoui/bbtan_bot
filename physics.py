@@ -138,20 +138,19 @@ def _collide_aabb(
 
 def _get_triangle_diagonal_normal(orientation: TriangleOrientation) -> Vec2:
     """
-    Retorna a normal da hipotenusa do triângulo baseada na orientação.
-    A normal aponta para FORA da superfície diagonal.
+    Retorna a normal outward da hipotenusa (aponta da superfície para a área vazia).
+    TOP_LEFT  (ângulo reto em cima-esq): corpo em cima-esq, vazio em baixo-dir → (+1,+1)
+    TOP_RIGHT (ângulo reto em cima-dir): corpo em cima-dir, vazio em baixo-esq → (-1,+1)
+    BOT_LEFT  (ângulo reto em baixo-esq): corpo em baixo-esq, vazio em cima-dir → (+1,-1)
+    BOT_RIGHT (ângulo reto em baixo-dir): corpo em baixo-dir, vazio em cima-esq → (-1,-1)
     """
     inv_sqrt2 = 1.0 / math.sqrt(2.0)
 
     normals = {
-        # Triângulo com vértice no top-left: diagonal vai de top-right a bottom-left
-        TriangleOrientation.TOP_LEFT: Vec2(-inv_sqrt2, -inv_sqrt2),
-        # Triângulo com vértice no top-right: diagonal vai de top-left a bottom-right
-        TriangleOrientation.TOP_RIGHT: Vec2(inv_sqrt2, -inv_sqrt2),
-        # Triângulo com vértice no bottom-left
-        TriangleOrientation.BOTTOM_LEFT: Vec2(-inv_sqrt2, inv_sqrt2),
-        # Triângulo com vértice no bottom-right
-        TriangleOrientation.BOTTOM_RIGHT: Vec2(inv_sqrt2, inv_sqrt2),
+        TriangleOrientation.TOP_LEFT: Vec2(inv_sqrt2, inv_sqrt2),
+        TriangleOrientation.TOP_RIGHT: Vec2(-inv_sqrt2, inv_sqrt2),
+        TriangleOrientation.BOTTOM_LEFT: Vec2(inv_sqrt2, -inv_sqrt2),
+        TriangleOrientation.BOTTOM_RIGHT: Vec2(-inv_sqrt2, -inv_sqrt2),
     }
     return normals.get(orientation, Vec2(0, -1))
 
@@ -200,8 +199,9 @@ def _collide_triangle(
 ) -> Optional[Vec2]:
     """
     Colisão com bloco triangular.
-    AABB como fast-reject, depois verifica se a bola está perto da
-    forma real do triângulo (não da metade vazia da cell).
+    AABB como fast-reject, depois verifica proximidade ao polígono real.
+    Distingue entrada pelo cateto (rebate como parede) vs hipotenusa
+    (reflexão pela normal diagonal).
     """
     aabb_normal = _collide_aabb(pos, vel, radius, block.x, block.y, block.w, block.h)
     if aabb_normal is None:
@@ -211,15 +211,14 @@ def _collide_triangle(
         if not _point_near_polygon(pos.x, pos.y, radius, block.vertices):
             return None
 
-    if (
-        block.tri_orientation != TriangleOrientation.UNKNOWN
-        and len(block.vertices) >= 3
-    ):
-        diag_normal = _get_triangle_diagonal_normal(block.tri_orientation)
-        center_to_ball = Vec2(pos.x - block.cx, pos.y - block.cy)
-        if abs(center_to_ball.dot(diag_normal)) < block.w * 0.7:
-            return diag_normal
+    if block.tri_orientation == TriangleOrientation.UNKNOWN:
+        return aabb_normal
 
+    diag_normal = _get_triangle_diagonal_normal(block.tri_orientation)
+    d = Vec2(pos.x - block.cx, pos.y - block.cy)
+
+    if d.dot(diag_normal) > 0:
+        return diag_normal
     return aabb_normal
 
 

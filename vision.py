@@ -237,33 +237,31 @@ def _classify_polygon(
     hull_fill = hull_area / max(w * h, 1)
 
     if hull_fill < 0.70:
-        return BlockType.TRIANGLE, _get_triangle_orientation(approx, bbox)
+        return BlockType.TRIANGLE, TriangleOrientation.UNKNOWN
     return BlockType.SQUARE, TriangleOrientation.UNKNOWN
 
 
-def _get_triangle_orientation(
-    approx: np.ndarray, bbox: Tuple[int, int, int, int]
-) -> TriangleOrientation:
-    """Determina a orientação do triângulo baseado na posição do vértice agudo."""
-    x, y, w, h = bbox
-    cx_box = x + w / 2
-    cy_box = y + h / 2
-
-    # Encontra o vértice mais distante do centro do bounding box
-    pts = approx.reshape(-1, 2)
-    distances = np.sqrt((pts[:, 0] - cx_box) ** 2 + (pts[:, 1] - cy_box) ** 2)
-    tip_idx = np.argmax(distances)
-    tip = pts[tip_idx]
-
-    # Classifica baseado em qual quadrante do bbox o vértice está
-    if tip[0] < cx_box and tip[1] < cy_box:
-        return TriangleOrientation.TOP_LEFT
-    elif tip[0] >= cx_box and tip[1] < cy_box:
+def _get_triangle_orientation(raw_roi: np.ndarray) -> TriangleOrientation:
+    """Determina a orientação do triângulo via centroide do mask na célula."""
+    M = cv2.moments(raw_roi)
+    if M["m00"] < 1:
+        return TriangleOrientation.UNKNOWN
+    cx = M["m10"] / M["m00"]
+    cy = M["m01"] / M["m00"]
+    center_x = raw_roi.shape[1] / 2.0
+    center_y = raw_roi.shape[0] / 2.0
+    dx = cx - center_x
+    dy = cy - center_y
+    if abs(dx) < 5 and abs(dy) < 5:
+        return TriangleOrientation.UNKNOWN
+    if dx > 0 and dy > 0:
+        return TriangleOrientation.BOTTOM_RIGHT
+    elif dx > 0 and dy < 0:
         return TriangleOrientation.TOP_RIGHT
-    elif tip[0] < cx_box and tip[1] >= cy_box:
+    elif dx < 0 and dy > 0:
         return TriangleOrientation.BOTTOM_LEFT
     else:
-        return TriangleOrientation.BOTTOM_RIGHT
+        return TriangleOrientation.TOP_LEFT
 
 
 _HP_DIGIT_TEMPLATES: dict = {}
@@ -466,9 +464,11 @@ def detect_blocks(frame: np.ndarray) -> List[Block]:
                         hull_area = cv2.contourArea(cv2.convexHull(raw_cnt_cell))
                         hull_fill = hull_area / max(cell_w * cell_h, 1)
                         if hull_fill < 0.60:
-                            block_type = BlockType.TRIANGLE
-                            tri_orient = _get_triangle_orientation(
-                                raw_approx, (cell_x, cell_y, cell_w, cell_h))
+                            tri_orient = _get_triangle_orientation(raw_roi)
+                            if tri_orient != TriangleOrientation.UNKNOWN:
+                                block_type = BlockType.TRIANGLE
+                            else:
+                                block_type = BlockType.SQUARE
                         else:
                             block_type = BlockType.SQUARE
                             tri_orient = TriangleOrientation.UNKNOWN
@@ -508,6 +508,22 @@ def detect_blocks(frame: np.ndarray) -> List[Block]:
                 c_right = c_left
 
         if -1 in (c_left, c_right, r_top, r_bot):
+            M = cv2.moments(cnt)
+            if M["m00"] > 0:
+                cx_cnt = M["m10"] / M["m00"]
+                cy_cnt = M["m01"] / M["m00"]
+                c_mid = _get_col_index(cx_cnt)
+                r_mid = _get_row_index(cy_cnt)
+                if c_left == -1:
+                    c_left = c_mid
+                if c_right == -1:
+                    c_right = c_mid
+                if r_top == -1:
+                    r_top = r_mid
+                if r_bot == -1:
+                    r_bot = r_mid
+
+        if -1 in (c_left, c_right, r_top, r_bot):
             continue
 
         cols_span = abs(c_right - c_left) + 1
@@ -534,8 +550,11 @@ def detect_blocks(frame: np.ndarray) -> List[Block]:
                 hull_fill = hull_area / max(w * h, 1)
 
                 if hull_fill < 0.60:
-                    block_type = BlockType.TRIANGLE
-                    tri_orient = _get_triangle_orientation(raw_approx, (x, y, w, h))
+                    tri_orient = _get_triangle_orientation(raw_roi)
+                    if tri_orient != TriangleOrientation.UNKNOWN:
+                        block_type = BlockType.TRIANGLE
+                    else:
+                        block_type = BlockType.SQUARE
                 else:
                     block_type = BlockType.SQUARE
                     tri_orient = TriangleOrientation.UNKNOWN
@@ -545,6 +564,8 @@ def detect_blocks(frame: np.ndarray) -> List[Block]:
                 peri = cv2.arcLength(cnt, True)
                 approx = cv2.approxPolyDP(cnt, cfg.POLY_APPROX_FACTOR * peri, True)
                 block_type, tri_orient = _classify_polygon(cnt, approx, (x, y, w, h))
+                if block_type == BlockType.TRIANGLE:
+                    block_type = BlockType.SQUARE
                 vertices = approx.reshape(-1, 2)
 
             hp = _read_hp(frame, x, y, w, h)
