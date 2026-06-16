@@ -23,6 +23,10 @@ WALL_BOTTOM = GAME_REGION[3] - 10  # acima do robô/bola
 GRID_COLUMNS = 7
 BLOCK_SIZE = GAME_REGION[2] // GRID_COLUMNS  # pixels por bloco
 
+# Limites calibrados de cada coluna (via calibrate_columns.py)
+COL_LEFTS  = [4, 67, 132, 195, 258, 321, 386]
+COL_RIGHTS = [63, 128, 191, 255, 318, 382, 444]
+
 # Limites de cada fileira, relativos ao frame capturado (0 = mais baixa/perigosa)
 # Computados a partir de _GRID_TOP_Y e BLOCK_SIZE para cobertura contígua (sem gaps)
 _GRID_TOP_Y = 67  # Y do topo da fileira mais alta (calibrar se mudar GAME_REGION)
@@ -62,29 +66,46 @@ BLOCK_COLOR_RANGES = [
     ("amarelo_ouro",  np.array([22, 200, 150]),  np.array([28, 255, 255])),
     ("laranja_escuro", np.array([9, 200, 150]),  np.array([16, 255, 255])),
     ("rosa",           np.array([162, 200, 150]), np.array([179, 255, 255])),
+    ("verde",          np.array([65, 180, 120]),  np.array([78, 255, 255])),
     ("amarelo_ouro",   np.array([22, 200, 150]),  np.array([28, 255, 255])),
     ("laranja2",       np.array([16, 200, 150]),  np.array([22, 255, 255])),
+    ("azul",           np.array([108, 100, 150]), np.array([120, 255, 255])),   # #5c6ebf
+    ("violeta",        np.array([118, 110, 160]), np.array([128, 255, 255])),   # #6557cf
+    ("ciano",          np.array([82, 120, 130]),  np.array([92, 255, 255])),    # #42ab9f
 ]
 
-# BLOCOS — qualquer coisa colorida e brilhante (exclui fundo escuro)
-BLOCK_HSV_LOW = np.array([0, 80, 100])
+# BLOCOS — qualquer coisa colorida (exclui fundo escuro V<50)
+# BLOCK_HSV_LOW = np.array([0, 80, 100])  # antigo: perdia blocos escuros (roxo)
+BLOCK_HSV_LOW = np.array([0, 60, 60])
 BLOCK_HSV_HIGH = np.array([179, 255, 255])
 
-# Número de HP — texto branco (quase-branco) sobre fundo colorido
-HP_TEXT_HSV_LOW  = np.array([0,   0,   252])
-HP_TEXT_HSV_HIGH = np.array([175, 255, 255])
-# Alternativa: texto escuro (roxo/azul) sobre fundo claro
-# HP_TEXT_HSV_LOW  = np.array([129, 137, 218])
-# HP_TEXT_HSV_HIGH = np.array([149, 255, 255])
+# Número de HP — texto escuro sobre fundo colorido
+# antigo (branco): [0, 0, 252] / [175, 255, 255]
+HP_TEXT_HSV_LOW  = np.array([0, 0, 0])
+HP_TEXT_HSV_HIGH = np.array([179, 255, 99])
 
 # BOLA branca
 BALL_HSV_LOW = np.array([0, 0, 200])
 BALL_HSV_HIGH = np.array([179, 40, 255])
 
 # Contagem de bolas (OCR) — região absoluta na tela onde aparece "x14", "x1", etc.
-BALL_COUNT_REGION = (1324, 829, 483, 36)
-BALL_COUNT_HSV_LOW  = np.array([0, 0, 200])
-BALL_COUNT_HSV_HIGH = np.array([179, 41, 255])
+# antigo: (1324, 829, 483, 36)
+BALL_COUNT_REGION = (1308, 824, 536, 33)
+# antigo: [0, 0, 200] / [179, 41, 255]
+BALL_COUNT_HSV_LOW  = np.array([0, 0, 140])
+BALL_COUNT_HSV_HIGH = np.array([179, 50, 255])
+
+# Indicador de fim de rodada — 4 regiões absolutas na tela com cor rosa (#e53572)
+# Quando as 4 regiões contêm essa cor, a rodada acabou e o jogo pode ser analisado
+ROUND_END_REGIONS = [
+    (1445, 920, 22, 29),
+    (1544, 919, 25, 30),
+    (1649, 922, 22, 28),
+    (1748, 919, 27, 32),
+]
+# #e53572 → RGB(229,53,114) → OpenCV HSV: H≈170, S≈196, V≈229
+ROUND_END_HSV_LOW  = np.array([163, 150, 180])
+ROUND_END_HSV_HIGH = np.array([177, 255, 255])
 
 # Fundo escuro — tudo abaixo desse valor é ignorado
 BG_VALUE_THRESHOLD = 80
@@ -128,15 +149,20 @@ SCORE_MULTI_BOUNCE = 5  # bônus por ricochete entre blocos consecutivos
 SCORE_LOOP_BONUS = 100  # bônus se detectar "loop" entre blocos próximos
 SCORE_ROW0_SURVIVE_PENALTY = 100  # penalidade por HP restante em blocos da row 0 após simulação
 
+# Pesos para ranking (weighted_hits)
+DESTROY_WEIGHT = 5      # bônus por bloco destruído (multiplicado por ROW_MULTIPLIER)
+EXTRA_BALL_WEIGHT = 30  # bônus por bola extra coletada (abaixo de row 0/1, acima do resto)
+
 # Multiplicadores por fileira (índice 0 = mais baixa, LEVELS[0]=480)
+# antigo: 0:15, 1:5
 ROW_MULTIPLIERS = {
-    0: 15.0,  # CRÍTICO: Fileira colada no chão (Y≈480)
-    1: 5.0,   # ALTO: Segunda fileira (Y≈417)
-    2: 2.5,   # MÉDIO: Terceira fileira (Y≈352)
-    3: 1.5,   # NORMAL: Quarta fileira (Y≈289)
-    4: 1.0,   # PADRÃO: Quinta fileira (Y≈225)
-    5: 0.8,   # BAIXO: Sexta fileira (Y≈162)
-    6: 0.5    # DESPREZÍVEL: Fileira lá no teto (Y≈99)
+    0: 100.0,  # GAME OVER IMINENTE: última fileira
+    1: 50.0,   # PERIGO: penúltima fileira
+    2: 2.5,    # MÉDIO: Terceira fileira (Y≈352)
+    3: 1.5,    # NORMAL: Quarta fileira (Y≈289)
+    4: 1.0,    # PADRÃO: Quinta fileira (Y≈225)
+    5: 0.8,    # BAIXO: Sexta fileira (Y≈162)
+    6: 0.5     # DESPREZÍVEL: Fileira lá no teto (Y≈99)
 }
 
 # Substituído por ROW_MULTIPLIERS (scoring por fileira via block.row_index)

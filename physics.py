@@ -23,13 +23,14 @@ from vision import Block, BlockType, PowerUp, PowerUpType, TriangleOrientation
 class SimResult:
     """Resultado de uma simulação de trajetória."""
 
-    angle: float  # ângulo testado em graus
-    score: float  # pontuação total (display apenas)
-    total_hits: int  # total de colisões com blocos
-    blocks_destroyed: int  # blocos que seriam destruídos
-    powerups_collected: int  # power-ups coletados (todos os tipos)
-    extra_balls_collected: int = 0  # apenas power-ups do tipo EXTRA_BALL (+)
-    critical_hits: int = 0  # colisões em blocos das rows 0 ou 1 (últimas 2 linhas)
+    angle: float
+    score: float  # display apenas
+    total_hits: int
+    weighted_hits: float  # hits ponderados por ROW_MULTIPLIERS
+    danger_hits: int  # hits efetivos em blocos das rows 0-1 (ranking primário)
+    blocks_destroyed: int
+    powerups_collected: int
+    extra_balls_collected: int = 0
     path: List[Tuple[float, float]] = field(default_factory=list)
     hit_details: List[str] = field(default_factory=list)
 
@@ -155,28 +156,66 @@ def _get_triangle_diagonal_normal(orientation: TriangleOrientation) -> Vec2:
     return normals.get(orientation, Vec2(0, -1))
 
 
+def _dist_to_segment_sq(px: float, py: float, ax: float, ay: float, bx: float, by: float) -> float:
+    dx, dy = bx - ax, by - ay
+    len_sq = dx * dx + dy * dy
+    if len_sq < 1e-8:
+        return (px - ax) ** 2 + (py - ay) ** 2
+    t = max(0.0, min(1.0, ((px - ax) * dx + (py - ay) * dy) / len_sq))
+    proj_x = ax + t * dx
+    proj_y = ay + t * dy
+    return (px - proj_x) ** 2 + (py - proj_y) ** 2
+
+
+def _point_near_polygon(px: float, py: float, radius: float, verts: np.ndarray) -> bool:
+    """True se (px,py) está dentro do polígono ou a menos de radius de alguma aresta."""
+    n = len(verts)
+    if n < 3:
+        return True
+
+    inside = False
+    j = n - 1
+    for i in range(n):
+        xi, yi = float(verts[i][0]), float(verts[i][1])
+        xj, yj = float(verts[j][0]), float(verts[j][1])
+        if ((yi > py) != (yj > py)) and (px < (xj - xi) * (py - yi) / (yj - yi) + xi):
+            inside = not inside
+        j = i
+    if inside:
+        return True
+
+    r_sq = radius * radius
+    j = n - 1
+    for i in range(n):
+        xi, yi = float(verts[i][0]), float(verts[i][1])
+        xj, yj = float(verts[j][0]), float(verts[j][1])
+        if _dist_to_segment_sq(px, py, xi, yi, xj, yj) < r_sq:
+            return True
+        j = i
+    return False
+
+
 def _collide_triangle(
     pos: Vec2, vel: Vec2, radius: float, block: Block
 ) -> Optional[Vec2]:
     """
     Colisão com bloco triangular.
-    Primeiro checa AABB, depois refina com a diagonal.
+    AABB como fast-reject, depois verifica se a bola está perto da
+    forma real do triângulo (não da metade vazia da cell).
     """
-    # Checa AABB primeiro (fast reject)
     aabb_normal = _collide_aabb(pos, vel, radius, block.x, block.y, block.w, block.h)
     if aabb_normal is None:
         return None
 
-    # Se o ponto está perto da região do triângulo, usa a normal diagonal
-    # Caso contrário, usa a normal AABB das bordas retas
+    if len(block.vertices) >= 3:
+        if not _point_near_polygon(pos.x, pos.y, radius, block.vertices):
+            return None
+
     if (
         block.tri_orientation != TriangleOrientation.UNKNOWN
         and len(block.vertices) >= 3
     ):
-        # Checa se a bola está mais perto da hipotenusa
         diag_normal = _get_triangle_diagonal_normal(block.tri_orientation)
-
-        # Projeção simples: se a bola está "do lado" da diagonal, usa ela
         center_to_ball = Vec2(pos.x - block.cx, pos.y - block.cy)
         if abs(center_to_ball.dot(diag_normal)) < block.w * 0.7:
             return diag_normal
@@ -235,8 +274,88 @@ def _apply_laser(
 
 
 # ─────────────────────────────────────────────
-# SIMULAÇÃO PRINCIPAL
+# SIMULAÇÃO PRINCIPAL (sequencial por bola)
 # ─────────────────────────────────────────────
+
+
+def _sim_one_ball(
+    start_x: float,
+    start_y: float,
+    angle_deg: float,
+    blocks: List[Block],
+    block_hp: dict,
+    powerups: List[PowerUp],
+    collected_pus: set,
+    record_path: bool = False,
+) -> Tuple[List[Tuple[int, int]], set, List[Tuple[float, float]]]:
+    """
+    Simula UMA bola (1 dano por colisão). Não altera block_hp externo.
+    Retorna (hit_sequence, new_pu_indices, path).
+    hit_sequence: [(block_id, row_index), ...] em ordem de colisão.
+    """
+    angle_rad = math.radians(angle_deg)
+    vel = Vec2(math.cos(angle_rad), -math.sin(angle_rad))
+    vel = vel.normalized() * cfg.BALL_SPEED
+    pos = Vec2(start_x, start_y)
+    radius = cfg.BALL_RADIUS
+    effective_bottom = max(cfg.WALL_BOTTOM, start_y + radius + 2)
+
+    local_hp = dict(block_hp)
+    hit_seq: List[Tuple[int, int]] = []
+    new_pus: set = set()
+    path: List[Tuple[float, float]] = []
+    went_up = False
+
+    for step in range(cfg.MAX_SIM_STEPS):
+        pos = pos + vel * (cfg.SIM_STEP_SIZE / cfg.BALL_SPEED)
+
+        if record_path and step % 4 == 0:
+            path.append(pos.as_tuple())
+
+        if pos.y < start_y - radius * 2:
+            went_up = True
+
+        if pos.x - radius <= cfg.WALL_LEFT:
+            pos.x = cfg.WALL_LEFT + radius
+            vel.x = abs(vel.x)
+        elif pos.x + radius >= cfg.WALL_RIGHT:
+            pos.x = cfg.WALL_RIGHT - radius
+            vel.x = -abs(vel.x)
+
+        if pos.y - radius <= cfg.WALL_TOP:
+            pos.y = cfg.WALL_TOP + radius
+            vel.y = abs(vel.y)
+
+        if went_up and pos.y + radius >= effective_bottom:
+            break
+
+        for block in blocks:
+            if local_hp.get(id(block), 0) <= 0:
+                continue
+
+            if block.block_type == BlockType.TRIANGLE:
+                normal = _collide_triangle(pos, vel, radius, block)
+            else:
+                normal = _collide_aabb(
+                    pos, vel, radius, block.x, block.y, block.w, block.h
+                )
+
+            if normal is not None:
+                vel_new = vel.reflect(normal)
+                vel.x = vel_new.x
+                vel.y = vel_new.y
+                pos = pos + normal * (radius * 0.5)
+                local_hp[id(block)] -= 1
+                hit_seq.append((id(block), block.row_index))
+                break
+
+        for i, pu in enumerate(powerups):
+            if i in collected_pus or i in new_pus:
+                continue
+            if _collide_powerup(pos, radius, pu):
+                new_pus.add(i)
+
+    return hit_seq, new_pus, path
 
 
 def simulate_trajectory(
@@ -249,169 +368,121 @@ def simulate_trajectory(
     record_path: bool = False,
 ) -> SimResult:
     """
-    Simula a trajetória de uma bola disparada do ponto (start_x, start_y)
-    no ângulo dado (0° = direita, 90° = cima, 180° = esquerda).
+    Simula ball_count bolas sequencialmente. Cada bola causa 1 dano por
+    colisão. Blocos destruídos por bolas anteriores são removidos para
+    bolas posteriores, alterando a trajetória.
 
-    No BBTAN todas as bolas seguem a mesma trajetória, então cada ponto
-    de colisão causa ball_count hits no bloco (uma vez por bola).
-
-    Retorna SimResult com a pontuação e estatísticas.
+    Otimização: agrupa bolas que seguem a mesma trajetória (batch) até
+    que o próximo bloco seja destruído, evitando re-simular cada bola.
     """
-    # Converte ângulo para vetor de direção
-    # No BBTAN, 90° = direto pra cima, >90 vai pra esquerda, <90 pra direita
-    angle_rad = math.radians(angle_deg)
-    vel = Vec2(math.cos(angle_rad), -math.sin(angle_rad))
-    vel = vel.normalized()
-    vel = vel * cfg.BALL_SPEED
-
-    pos = Vec2(start_x, start_y)
-    radius = cfg.BALL_RADIUS
-
-    # Limite inferior: o maior entre WALL_BOTTOM e a posição real da bola + margem
-    # Isso garante que a simulação funciona mesmo se WALL_BOTTOM estiver errado
-    effective_bottom = max(cfg.WALL_BOTTOM, start_y + radius + 2)
-
-    # Estado da simulação
-    score = 0.0
-    total_hits = 0
-    critical_hits = 0  # contatos em rows 0 ou 1 (últimas 2 linhas)
-    blocks_destroyed = 0
-    powerups_collected = 0
-    extra_balls_collected = 0
-    path = []
-
-    # Cópia local do HP dos blocos para esta simulação
-    # Todas as N bolas passam pelo mesmo ponto, então cada colisão
-    # causa ball_count de dano
     block_hp = {id(b): b.hp for b in blocks}
-    # Tracking de power-ups já coletados
-    collected_pus = set()
-    # Tracking de bounces consecutivos em blocos (para bônus de multi-bounce)
-    consecutive_block_hits = 0
-    last_hit_id = None
-    went_up = False  # flag: bola já subiu pelo menos uma vez
+    block_map = {id(b): b for b in blocks}
+    collected_pus: set = set()
 
-    for step in range(cfg.MAX_SIM_STEPS):
-        # Avança a posição
-        pos = pos + vel * (cfg.SIM_STEP_SIZE / cfg.BALL_SPEED)
+    total_score = 0.0
+    total_hits = 0
+    total_weighted = 0.0
+    total_danger = 0
+    total_destroyed = 0
+    total_pu = 0
+    total_extra = 0
+    first_path: List[Tuple[float, float]] = []
 
-        if record_path and step % 4 == 0:
-            path.append(pos.as_tuple())
+    remaining = ball_count
 
-        # Marca que a bola subiu (para não terminar no primeiro frame)
-        if pos.y < start_y - radius * 2:
-            went_up = True
+    while remaining > 0:
+        active = [b for b in blocks if block_hp.get(id(b), 0) > 0]
 
-        # ── Colisão com paredes laterais ──
-        if pos.x - radius <= cfg.WALL_LEFT:
-            pos.x = cfg.WALL_LEFT + radius
-            vel.x = abs(vel.x)
-            consecutive_block_hits = 0
+        hit_seq, new_pus, path = _sim_one_ball(
+            start_x, start_y, angle_deg, active, block_hp,
+            powerups, collected_pus,
+            record_path=(record_path and not first_path),
+        )
 
-        elif pos.x + radius >= cfg.WALL_RIGHT:
-            pos.x = cfg.WALL_RIGHT - radius
-            vel.x = -abs(vel.x)
-            consecutive_block_hits = 0
+        if record_path and not first_path:
+            first_path = path
 
-        # ── Colisão com teto ──
-        if pos.y - radius <= cfg.WALL_TOP:
-            pos.y = cfg.WALL_TOP + radius
-            vel.y = abs(vel.y)
-            consecutive_block_hits = 0
+        # ── Power-ups (coletados pela primeira bola do batch) ──
+        laser_fired = False
+        for pi in new_pus:
+            collected_pus.add(pi)
+            total_pu += 1
+            pu = powerups[pi]
+            if pu.power_up_type in (PowerUpType.LASER_H, PowerUpType.LASER_V):
+                ls, ld = _apply_laser(pu, blocks, block_hp, 1)
+                total_score += ls
+                total_destroyed += ld
+                laser_fired = True
+            elif pu.power_up_type == PowerUpType.EXTRA_BALL:
+                total_extra += 1
+                total_score += cfg.SCORE_HIT_POWERUP
+                total_weighted += cfg.EXTRA_BALL_WEIGHT
+            else:
+                total_score += cfg.SCORE_HIT_POWERUP
 
-        # ── Bola saiu por baixo (fim do turno) ──
-        # Só conta como saída se a bola já subiu pelo menos uma vez
-        if went_up and pos.y + radius >= effective_bottom:
+        if not hit_seq:
             break
 
-        # ── Colisão com blocos ──
-        for block in blocks:
-            if block_hp.get(id(block), 0) <= 0:
-                continue  # bloco já destruído nesta simulação
+        # ── Batch: quantas bolas seguem esta mesma trajetória? ──
+        hits_per_block: dict = {}
+        row_of: dict = {}
+        for bid, ridx in hit_seq:
+            hits_per_block[bid] = hits_per_block.get(bid, 0) + 1
+            row_of[bid] = ridx
 
-            # Escolhe método de colisão baseado no tipo
-            if block.block_type == BlockType.TRIANGLE:
-                normal = _collide_triangle(pos, vel, radius, block)
-            elif block.w > cfg.BLOCK_SIZE * 1.5:
-                normal = _collide_aabb(pos, vel, radius, block.x, block.y, block.w, block.h)
-            else:
-                normal = _collide_aabb(pos, vel, radius, block.x, block.y, block.w, block.h)
+        if laser_fired:
+            batch = 1
+        else:
+            batch = remaining
+            for bid, nh in hits_per_block.items():
+                hp = block_hp.get(bid, 0)
+                if hp > 0 and nh > 0:
+                    batch = min(batch, math.ceil(hp / nh))
+            batch = max(1, batch)
 
-            if normal is not None:
-                # Reflete a velocidade
-                vel_new = vel.reflect(normal)
-                vel.x = vel_new.x
-                vel.y = vel_new.y
-
-                # Empurra a bola pra fora do bloco
-                pos = pos + normal * (radius * 0.5)
-
-                # Só conta o dano efetivo (evita inflar score por overkill)
-                effective_damage = min(ball_count, block_hp[id(block)])
-                block_hp[id(block)] -= ball_count
-                total_hits += 1
-                if block.row_index in (0, 1):
-                    critical_hits += 1
-
-                row_mult = cfg.ROW_MULTIPLIERS.get(block.row_index, 1.0)
-                score += cfg.SCORE_HIT_BLOCK * effective_damage * row_mult
-
-                # Multi-bounce bonus
-                bid = id(block)
-                if last_hit_id is not None and last_hit_id != bid:
-                    consecutive_block_hits += 1
-                    if consecutive_block_hits >= 2:
-                        score += cfg.SCORE_MULTI_BOUNCE * consecutive_block_hits
-                else:
-                    consecutive_block_hits = 1
-                last_hit_id = bid
-
-                # Bloco destruído?
-                if block_hp[id(block)] <= 0:
-                    blocks_destroyed += 1
-                    score += cfg.SCORE_DESTROY_BLOCK * row_mult
-
-                break  # só processa uma colisão com bloco por step
-
-        # ── Colisão com power-ups ──
-        for i, pu in enumerate(powerups):
-            if i in collected_pus:
+        # ── Aplica dano do batch ──
+        for bid, nh in hits_per_block.items():
+            hp = block_hp.get(bid, 0)
+            if hp <= 0:
                 continue
-            if _collide_powerup(pos, radius, pu):
-                collected_pus.add(i)
-                powerups_collected += 1
+            damage = batch * nh
+            effective = min(damage, hp)
+            block_hp[bid] -= damage
 
-                if pu.power_up_type in (PowerUpType.LASER_H, PowerUpType.LASER_V):
-                    laser_score, laser_destroyed = _apply_laser(pu, blocks, block_hp, ball_count)
-                    score += laser_score
-                    blocks_destroyed += laser_destroyed
-                elif pu.power_up_type == PowerUpType.EXTRA_BALL:
-                    extra_balls_collected += 1
-                    score += cfg.SCORE_HIT_POWERUP
-                else:
-                    score += cfg.SCORE_HIT_POWERUP
+            rm = cfg.ROW_MULTIPLIERS.get(row_of[bid], 1.0)
+            total_hits += effective
+            total_weighted += rm * effective
+            total_score += cfg.SCORE_HIT_BLOCK * effective * rm
+            if row_of[bid] <= 1:
+                total_danger += effective
 
-    # Penalidade por blocos da row 0 que sobreviveram à simulação
-    block_by_id = {id(b): b for b in blocks}
-    for bid, remaining_hp in block_hp.items():
-        if remaining_hp > 0:
-            b = block_by_id.get(bid)
+            if block_hp[bid] <= 0:
+                total_destroyed += 1
+                total_score += cfg.SCORE_DESTROY_BLOCK * rm
+                total_weighted += rm * cfg.DESTROY_WEIGHT
+
+        remaining -= batch
+
+    # ── Penalidade por blocos da row 0 que sobreviveram ──
+    for bid, hp in block_hp.items():
+        if hp > 0:
+            b = block_map.get(bid)
             if b is not None and b.row_index == 0:
-                score -= cfg.SCORE_ROW0_SURVIVE_PENALTY * remaining_hp
+                total_score -= cfg.SCORE_ROW0_SURVIVE_PENALTY * hp
 
-    # Bônus por loop: se bateu muitas vezes em blocos diferentes
     if total_hits > 10:
-        score += cfg.SCORE_LOOP_BONUS * (total_hits // 10)
+        total_score += cfg.SCORE_LOOP_BONUS * (total_hits // 10)
 
     return SimResult(
         angle=angle_deg,
-        score=score,
+        score=total_score,
         total_hits=total_hits,
-        critical_hits=critical_hits,
-        blocks_destroyed=blocks_destroyed,
-        powerups_collected=powerups_collected,
-        extra_balls_collected=extra_balls_collected,
-        path=path if record_path else [],
+        weighted_hits=total_weighted,
+        danger_hits=total_danger,
+        blocks_destroyed=total_destroyed,
+        powerups_collected=total_pu,
+        extra_balls_collected=total_extra,
+        path=first_path if record_path else [],
     )
 
 
@@ -428,50 +499,26 @@ def find_best_angle(
     ball_count: int,
     angle_min: int = cfg.ANGLE_MIN,
     angle_max: int = cfg.ANGLE_MAX,
-    angle_step: int = cfg.ANGLE_STEP,
 ) -> Tuple[SimResult, List[SimResult]]:
     """
-    Busca em dois passos: coarse (5°) para identificar regiões promissoras,
-    depois fine (angle_step) ao redor dos top candidatos.
-    ball_count: número de bolas atual (afeta dano por colisão).
+    Simula todos os ângulos de 1 em 1 grau.
     Returns: (melhor_resultado, lista_todos_resultados)
     """
-    _COARSE_STEP = 5
-    _FINE_RANGE = 5   # ±5° ao redor de cada candidato
-    _TOP_K = 5
-
-    def _sim(angle: float) -> SimResult:
-        return simulate_trajectory(
-            ball_x, ball_y, angle, blocks, powerups,
+    all_results = []
+    for a in range(angle_min, angle_max + 1):
+        r = simulate_trajectory(
+            ball_x, ball_y, float(a), blocks, powerups,
             ball_count=ball_count, record_path=False,
         )
+        all_results.append(r)
 
-    # Passo 1: varredura grossa
-    results_by_angle: dict = {}
-    for a in range(angle_min, angle_max + 1, _COARSE_STEP):
-        results_by_angle[a] = _sim(float(a))
-
-    # Top K candidatos pelo score coarse
-    top_coarse = sorted(results_by_angle.values(), key=lambda r: r.score, reverse=True)[:_TOP_K]
-
-    # Passo 2: refinamento fino ao redor dos candidatos
-    for candidate in top_coarse:
-        base = int(candidate.angle)
-        fine_min = max(angle_min, base - _FINE_RANGE)
-        fine_max = min(angle_max, base + _FINE_RANGE)
-        for a in range(fine_min, fine_max + 1, angle_step):
-            if a not in results_by_angle:
-                results_by_angle[a] = _sim(float(a))
-
-    # Ranking: 1º contatos nas últimas 2 linhas, 2º total de contatos
-    all_results = sorted(
-        results_by_angle.values(),
-        key=lambda r: (r.critical_hits, r.total_hits),
-        reverse=True,
-    )
+    has_danger = any(b.row_index <= 1 for b in blocks)
+    if has_danger:
+        all_results.sort(key=lambda r: (r.danger_hits, r.weighted_hits, r.total_hits), reverse=True)
+    else:
+        all_results.sort(key=lambda r: (r.weighted_hits, r.total_hits), reverse=True)
     best = all_results[0]
 
-    # Re-simula o melhor gravando o caminho
     best_with_path = simulate_trajectory(
         ball_x, ball_y, best.angle, blocks, powerups,
         ball_count=ball_count, record_path=True,

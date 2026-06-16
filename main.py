@@ -21,11 +21,11 @@ import threading
 import cv2
 
 import config as cfg
-from vision import scan_game, GameState
+from vision import scan_game, detect_round_end, GameState
 from physics import find_best_angle, SimResult
 from executor import execute_shot, wait_for_turn_end, wait_for_turn_end_smart
 from tools.debug_view import draw_trajectory, draw_stats_overlay
-from tools.visualizar_masks import run_masks_window
+from tools.visualizar_masks import run_masks_window, update_level_display
 
 
 def parse_args():
@@ -60,18 +60,16 @@ def parse_args():
 
 
 def run_turn(
+    state: GameState,
     ball_count_override: int = 0,
     current_ball_count: int = 1,
     debug: bool = False,
     dry_run: bool = False,
 ):
     """
-    Executa um turno completo.
+    Executa um turno completo a partir de um GameState já capturado.
     Retorna status: True (sucesso), False (falha), "game_over"
     """
-    # ── 1. CAPTURA E DETECÇÃO ──
-    state = scan_game()
-
     if state.game_over:
         print(
             f"  [GAME OVER] Tela branca detectada ({state.white_ratio:.0%}) — parando bot"
@@ -128,7 +126,7 @@ def run_turn(
 
     print(f"  Melhor angulo: {best.angle:.1f}°")
     print(
-        f"  Criticos (rows 0-1): {best.critical_hits}  |  Total hits: {best.total_hits}"
+        f"  Hits ponderados: {best.weighted_hits:.1f}  |  Danger hits: {best.danger_hits}  |  Total hits: {best.total_hits}"
     )
     print(
         f"  Score: {best.score:.0f} (destroyed={best.blocks_destroyed}, "
@@ -176,6 +174,21 @@ def main():
     masks_thread = threading.Thread(target=run_masks_window, args=(masks_stop,), daemon=True)
     masks_thread.start()
 
+    if args.dry_run:
+        print("Modo dry-run: apenas visualização. Ctrl+C para sair.")
+        try:
+            while True:
+                state = scan_game()
+                update_level_display(state.debug_frame, state.blocks, state.detected_ball_count)
+                time.sleep(1.0)
+        except KeyboardInterrupt:
+            print("\nParado pelo usuario.")
+        finally:
+            masks_stop.set()
+            masks_thread.join(timeout=2)
+            cv2.destroyAllWindows()
+        return
+
     if args.delay > 0:
         print(f"Iniciando em {args.delay:.0f}s — posicione o jogo!")
         time.sleep(args.delay)
@@ -197,7 +210,14 @@ def main():
 
             print(f"\n--- Turno {turn} ---")
 
+            # Captura e atualiza "Blocos por Level"
+            time.sleep(3)
+            state = scan_game()
+            update_level_display(state.debug_frame, state.blocks, state.detected_ball_count)
+            print("  [scan] Estado capturado — display atualizado")
+
             status = run_turn(
+                state=state,
                 ball_count_override=args.balls,
                 current_ball_count=ball_count,
                 debug=args.debug,
@@ -223,7 +243,7 @@ def main():
                         time.sleep(1)
                         pyautogui.click(1584, 838)
                         if i < 2:
-                            time.sleep(8)
+                            time.sleep(4)
 
                 turn = 0
                 ball_count = 1
@@ -253,17 +273,21 @@ def main():
                 if args.balls > 0:
                     ball_count = args.balls
 
-                # Espera o turno acabar
-                if args.smart_wait:
-                    print("  Aguardando turno (deteccao visual)...")
-                    wait_for_turn_end_smart()
+                # Aguarda fim da rodada (polling visual das 4 regiões rosa)
+                print("  Aguardando fim da rodada...")
+                timeout = 30.0
+                elapsed = 0.0
+                while elapsed < timeout:
+                    if detect_round_end():
+                        print("  Rodada encerrada detectada!")
+                        break
+                    time.sleep(0.3)
+                    elapsed += 0.3
                 else:
-                    print(f"  Aguardando {cfg.TURN_WAIT_TIME}s...")
-                    wait_for_turn_end()
+                    print("  [!] Timeout esperando fim da rodada")
 
-                # Aguarda blocos pararem antes do proximo scan
-                print(f"  Aguardando {cfg.PRESCAN_DELAY}s para blocos estabilizarem...")
-                time.sleep(cfg.PRESCAN_DELAY)
+                # Espera os blocos descerem e estabilizarem
+                time.sleep(2.0)
             else:
                 consecutive_fails += 1
                 if consecutive_fails >= max_fails:

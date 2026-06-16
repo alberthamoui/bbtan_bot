@@ -14,6 +14,7 @@ import mss
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import List, Optional, Tuple
+from pathlib import Path
 
 import config as cfg
 
@@ -104,6 +105,105 @@ class GameState:
 
 _sct = mss.mss()  # instância global reutilizável
 
+# ─────────────────────────────────────────────
+# TEMPLATES DE DÍGITOS (carregados uma vez)
+# ─────────────────────────────────────────────
+
+_DIGIT_TEMPLATES: dict = {}  # {digit_str: binary_image}
+_DIGIT_H = 28
+
+
+def _load_digit_templates():
+    if _DIGIT_TEMPLATES:
+        return
+    digits_dir = Path(__file__).resolve().parent / "templates" / "digits"
+    if not digits_dir.exists():
+        return
+    for p in digits_dir.glob("*.png"):
+        digit = p.stem
+        if digit.isdigit():
+            img = cv2.imread(str(p), cv2.IMREAD_GRAYSCALE)
+            if img is not None:
+                _DIGIT_TEMPLATES[digit] = img
+
+
+def _match_digit(crop: np.ndarray) -> Optional[str]:
+    """Compara um crop binarizado contra todos os templates. Retorna o dígito mais parecido."""
+    if not _DIGIT_TEMPLATES:
+        return None
+    h_norm = _DIGIT_H
+    aspect = crop.shape[1] / max(crop.shape[0], 1)
+    w_norm = max(1, round(h_norm * aspect))
+    resized = cv2.resize(crop, (w_norm, h_norm), interpolation=cv2.INTER_AREA)
+    _, binary = cv2.threshold(resized, 127, 255, cv2.THRESH_BINARY)
+
+    best_digit = None
+    best_score = -1
+    for digit, tmpl in _DIGIT_TEMPLATES.items():
+        tw = tmpl.shape[1]
+        target_w = max(tw, w_norm)
+        pad_cand = np.zeros((h_norm, target_w), dtype=np.uint8)
+        pad_tmpl = np.zeros((h_norm, target_w), dtype=np.uint8)
+        ox_c = (target_w - w_norm) // 2
+        pad_cand[:, ox_c:ox_c+w_norm] = binary
+        ox_t = (target_w - tw) // 2
+        pad_tmpl[:, ox_t:ox_t+tw] = tmpl
+        match = np.sum(pad_cand == pad_tmpl)
+        total = pad_cand.size
+        score = match / total
+        if score > best_score:
+            best_score = score
+            best_digit = digit
+    if best_score < 0.6:
+        return None
+    return best_digit
+
+
+def read_ball_count_template() -> int:
+    """Lê o número de bolas via template matching na região BALL_COUNT_REGION."""
+    _load_digit_templates()
+    if not _DIGIT_TEMPLATES:
+        return 0
+
+    bx, by, bw, bh = cfg.BALL_COUNT_REGION
+    mon = {"top": by, "left": bx, "width": bw, "height": bh}
+    img = np.array(_sct.grab(mon), dtype=np.uint8)[:, :, :3]
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    mask = cv2.inRange(hsv, cfg.BALL_COUNT_HSV_LOW, cfg.BALL_COUNT_HSV_HIGH)
+
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+
+    n_labels, labels, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
+
+    components = []
+    for i in range(1, n_labels):
+        x, y, w, h, area = stats[i]
+        if area < 15 or h < 6:
+            continue
+        crop = mask[y:y+h, x:x+w]
+        components.append((x, crop))
+
+    components.sort(key=lambda c: c[0])
+
+    if not components:
+        return 0
+
+    # Pula o primeiro componente (o "x" do prefixo)
+    digit_components = components[1:]
+    if not digit_components:
+        return 0
+
+    digits_str = ""
+    for _, crop in digit_components:
+        d = _match_digit(crop)
+        if d is not None:
+            digits_str += d
+
+    if not digits_str:
+        return 0
+    return int(digits_str)
+
 
 def capture_screen() -> np.ndarray:
     """Captura a região do jogo e retorna como array BGR (OpenCV)."""
@@ -166,19 +266,58 @@ def _get_triangle_orientation(
         return TriangleOrientation.BOTTOM_RIGHT
 
 
+_HP_DIGIT_TEMPLATES: dict = {}
+_HP_DIGIT_H = 20
+
+
+def _load_hp_digit_templates():
+    if _HP_DIGIT_TEMPLATES:
+        return
+    digits_dir = Path(__file__).resolve().parent / "templates" / "hp_digits"
+    if not digits_dir.exists():
+        return
+    for p in digits_dir.glob("*.png"):
+        digit = p.stem
+        if digit.isdigit():
+            img = cv2.imread(str(p), cv2.IMREAD_GRAYSCALE)
+            if img is not None:
+                _HP_DIGIT_TEMPLATES[digit] = img
+
+
+def _match_hp_digit(crop: np.ndarray) -> Optional[str]:
+    if not _HP_DIGIT_TEMPLATES:
+        return None
+    h_norm = _HP_DIGIT_H
+    aspect = crop.shape[1] / max(crop.shape[0], 1)
+    w_norm = max(1, round(h_norm * aspect))
+    resized = cv2.resize(crop, (w_norm, h_norm), interpolation=cv2.INTER_AREA)
+    _, binary = cv2.threshold(resized, 127, 255, cv2.THRESH_BINARY)
+
+    best_digit = None
+    best_score = -1
+    for digit, tmpl in _HP_DIGIT_TEMPLATES.items():
+        tw = tmpl.shape[1]
+        target_w = max(tw, w_norm)
+        pad_cand = np.zeros((h_norm, target_w), dtype=np.uint8)
+        pad_tmpl = np.zeros((h_norm, target_w), dtype=np.uint8)
+        ox_c = (target_w - w_norm) // 2
+        pad_cand[:, ox_c:ox_c+w_norm] = binary
+        ox_t = (target_w - tw) // 2
+        pad_tmpl[:, ox_t:ox_t+tw] = tmpl
+        match = np.sum(pad_cand == pad_tmpl)
+        score = match / pad_cand.size
+        if score > best_score:
+            best_score = score
+            best_digit = digit
+    if best_score < 0.6:
+        return None
+    return best_digit
+
+
 def _read_hp(frame_bgr: np.ndarray, x: int, y: int, w: int, h: int) -> int:
     """
-    Estima HP do bloco sem OCR.
-
-    Pipeline:
-      1. Recorta o interior do bloco (remove ~1/6 das bordas)
-      2. Aplica máscara HSV para isolar o texto branco (HP_TEXT_HSV_LOW/HIGH)
-      3. MORPH_OPEN para remover ruído de pixels isolados
-      4. Conta componentes conexos significativos — cada dígito forma ~1 blob
-      5. Mapeia contagem de blobs → HP representativo da faixa de dígitos
-
-    Retorna o valor representativo do meio de cada faixa (5, 50, 500, 5000).
-    A ordem de grandeza correta é suficiente para a simulação de trajetória.
+    Lê HP do bloco via template matching dos dígitos brancos.
+    Fallback para estimativa por contagem de blobs se não houver templates.
     """
     pad_x = max(2, w // 6)
     pad_y = max(2, h // 6)
@@ -203,8 +342,30 @@ def _read_hp(frame_bgr: np.ndarray, x: int, y: int, w: int, h: int) -> int:
 
     n_labels, _, stats, _ = cv2.connectedComponentsWithStats(text_mask, connectivity=8)
 
-    # Área mínima: 1% da ROI, nunca menos de 3 px
     min_area = max(3, (x2 - x1) * (y2 - y1) // 100)
+
+    # Tenta template matching primeiro
+    _load_hp_digit_templates()
+    if _HP_DIGIT_TEMPLATES:
+        components = []
+        for i in range(1, n_labels):
+            cx, cy, cw, ch, ca = stats[i]
+            if ca < min_area or ch < 4:
+                continue
+            crop = text_mask[cy:cy+ch, cx:cx+cw]
+            components.append((cx, crop))
+
+        if components:
+            components.sort(key=lambda c: c[0])
+            digits_str = ""
+            for _, crop in components:
+                d = _match_hp_digit(crop)
+                if d is not None:
+                    digits_str += d
+            if digits_str:
+                return int(digits_str)
+
+    # Fallback: estimativa por contagem de blobs
     significant = sum(
         1 for i in range(1, n_labels)
         if stats[i, cv2.CC_STAT_AREA] >= min_area
@@ -213,13 +374,13 @@ def _read_hp(frame_bgr: np.ndarray, x: int, y: int, w: int, h: int) -> int:
     if significant <= 0:
         return 1
     elif significant == 1:
-        return 5       # 1 dígito  → faixa 1–9
+        return 5
     elif significant == 2:
-        return 50      # 2 dígitos → faixa 10–99
+        return 50
     elif significant == 3:
-        return 500     # 3 dígitos → faixa 100–999
+        return 500
     else:
-        return 5000    # 4+ dígitos → faixa 1000–9999
+        return 5000
 
 
 def _get_row_index(cy: float) -> int:
@@ -233,73 +394,267 @@ def _get_row_index(cy: float) -> int:
     return -1
 
 
+def _get_col_index(cx: float) -> int:
+    """
+    Retorna o índice da coluna usando COL_LEFTS/COL_RIGHTS.
+    0 = mais à esquerda, 6 = mais à direita. Retorna -1 se fora de todas.
+    """
+    for i in range(cfg.GRID_COLUMNS):
+        if cfg.COL_LEFTS[i] <= cx <= cfg.COL_RIGHTS[i]:
+            return i
+    return -1
+
+
 def detect_blocks(frame: np.ndarray) -> List[Block]:
     """Detecta todos os blocos coloridos no frame."""
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
 
-    # Máscara para blocos laranja
-    mask = cv2.inRange(hsv, cfg.BLOCK_HSV_LOW, cfg.BLOCK_HSV_HIGH)
+    raw_mask = cv2.inRange(hsv, cfg.BLOCK_HSV_LOW, cfg.BLOCK_HSV_HIGH)
 
-    # Limpeza morfológica
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+    mask = cv2.morphologyEx(raw_mask, cv2.MORPH_CLOSE, kernel, iterations=2)
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
 
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
+    _MARGIN = 3
+
     blocks = []
     for cnt in contours:
         area = cv2.contourArea(cnt)
-        if area < cfg.MIN_BLOCK_AREA or area > cfg.MAX_BLOCK_AREA:
+        if area < cfg.MIN_BLOCK_AREA:
             continue
 
         x, y, w, h = cv2.boundingRect(cnt)
 
-        # Aceita apenas 1×1 (padrão/triângulo) ou 2×2 (bloco grande).
-        # Nenhum objeto ocupa mais de 1 célula em qualquer eixo exceto o 2×2.
-        bs = cfg.BLOCK_SIZE
-        is_large = w > bs * 1.5 and h > bs * 1.5
-        is_normal = w <= bs * 1.25 and h <= bs * 1.25
-        if not is_large and not is_normal:
+        # Power-ups são pequenos demais para ser bloco
+        if w < 35 or h < 35:
             continue
 
-        # Bloco 2×2 real tem área ~4× o padrão; dois blocos adjacentes que
-        # se fundiram têm área ~2× — rejeita fusões falsas.
-        if is_large and area < bs * bs * 3.0:
+        # Contorno gigante (fusão morfológica de múltiplos blocos) — split por grade
+        if area > cfg.MAX_BLOCK_AREA:
+            for ri in range(len(cfg.LEVEL_TOPS)):
+                cell_y = cfg.LEVEL_TOPS[ri]
+                cell_y2 = cfg.LEVEL_BOTS[ri]
+                if cell_y2 < y or cell_y > y + h:
+                    continue
+                for ci in range(cfg.GRID_COLUMNS):
+                    cell_x = cfg.COL_LEFTS[ci]
+                    cell_x2 = cfg.COL_RIGHTS[ci]
+                    if cell_x2 < x or cell_x > x + w:
+                        continue
+                    cell_w = cell_x2 - cell_x
+                    cell_h = cell_y2 - cell_y
+                    cell_roi = mask[cell_y:cell_y2, cell_x:cell_x2]
+                    if cell_roi.size == 0:
+                        continue
+                    fill = np.count_nonzero(cell_roi) / cell_roi.size
+                    if fill < 0.40:
+                        continue
+                    raw_roi = raw_mask[cell_y:cell_y2, cell_x:cell_x2]
+                    raw_cnts_cell, _ = cv2.findContours(
+                        raw_roi.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+                    )
+                    if raw_cnts_cell:
+                        raw_cnt_cell = max(raw_cnts_cell, key=cv2.contourArea)
+                        raw_peri = cv2.arcLength(raw_cnt_cell, True)
+                        raw_approx = cv2.approxPolyDP(
+                            raw_cnt_cell, cfg.POLY_APPROX_FACTOR * raw_peri, True
+                        )
+                        raw_approx[:, :, 0] += cell_x
+                        raw_approx[:, :, 1] += cell_y
+                        hull_area = cv2.contourArea(cv2.convexHull(raw_cnt_cell))
+                        hull_fill = hull_area / max(cell_w * cell_h, 1)
+                        if hull_fill < 0.60:
+                            block_type = BlockType.TRIANGLE
+                            tri_orient = _get_triangle_orientation(
+                                raw_approx, (cell_x, cell_y, cell_w, cell_h))
+                        else:
+                            block_type = BlockType.SQUARE
+                            tri_orient = TriangleOrientation.UNKNOWN
+                        vertices = raw_approx.reshape(-1, 2)
+                    else:
+                        block_type = BlockType.SQUARE
+                        tri_orient = TriangleOrientation.UNKNOWN
+                        vertices = np.array([[cell_x, cell_y]])
+                    cell_hp = _read_hp(frame, cell_x, cell_y, cell_w, cell_h)
+                    blocks.append(Block(
+                        x=cell_x, y=cell_y, w=cell_w, h=cell_h,
+                        cx=cell_x + cell_w / 2.0, cy=cell_y + cell_h / 2.0,
+                        block_type=block_type, hp=cell_hp,
+                        vertices=vertices,
+                        tri_orientation=tri_orient,
+                        row_index=ri, col_index=ci,
+                    ))
             continue
 
-        cy = y + h / 2.0
+        c_left = _get_col_index(x + _MARGIN)
+        c_right = _get_col_index(x + w - _MARGIN)
+        r_top = _get_row_index(y + _MARGIN)
+        r_bot = _get_row_index(y + h - _MARGIN)
 
-        row_idx = _get_row_index(cy)
-        if row_idx == -1:
+        if -1 in (c_left, c_right, r_top, r_bot):
             continue
 
-        # Coluna pelo canto esquerdo do bbox (mais estável que o centro para 2×2)
-        col_idx = round((x - cfg.WALL_LEFT) / cfg.BLOCK_SIZE)
-        col_idx = max(0, min(cfg.GRID_COLUMNS - 1, col_idx))
+        cols_span = abs(c_right - c_left) + 1
+        rows_span = abs(r_top - r_bot) + 1
 
-        # Aproximação poligonal para classificar forma
-        peri = cv2.arcLength(cnt, True)
-        approx = cv2.approxPolyDP(cnt, cfg.POLY_APPROX_FACTOR * peri, True)
+        if cols_span == 1 and rows_span == 1:
+            # Bloco 1×1 — classifica usando contorno da raw_mask (sem
+            # morfologia que infla triângulos para parecerem quadrados)
+            raw_roi = raw_mask[y:y+h, x:x+w]
+            raw_cnts, _ = cv2.findContours(
+                raw_roi.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+            )
 
-        block_type, tri_orient = _classify_polygon(cnt, approx, (x, y, w, h))
-        hp = _read_hp(frame, x, y, w, h)
+            if raw_cnts:
+                raw_cnt = max(raw_cnts, key=cv2.contourArea)
+                raw_peri = cv2.arcLength(raw_cnt, True)
+                raw_approx = cv2.approxPolyDP(
+                    raw_cnt, cfg.POLY_APPROX_FACTOR * raw_peri, True
+                )
+                raw_approx[:, :, 0] += x
+                raw_approx[:, :, 1] += y
 
-        block = Block(
-            x=x,
-            y=y,
-            w=w,
-            h=h,
-            cx=x + w / 2.0,
-            cy=cy,
-            block_type=block_type,
-            hp=hp,
-            vertices=approx.reshape(-1, 2),
-            tri_orientation=tri_orient,
-            row_index=row_idx,
-            col_index=col_idx,
-        )
-        blocks.append(block)
+                hull_area = cv2.contourArea(cv2.convexHull(raw_cnt))
+                hull_fill = hull_area / max(w * h, 1)
+
+                if hull_fill < 0.60:
+                    block_type = BlockType.TRIANGLE
+                    tri_orient = _get_triangle_orientation(raw_approx, (x, y, w, h))
+                else:
+                    block_type = BlockType.SQUARE
+                    tri_orient = TriangleOrientation.UNKNOWN
+
+                vertices = raw_approx.reshape(-1, 2)
+            else:
+                peri = cv2.arcLength(cnt, True)
+                approx = cv2.approxPolyDP(cnt, cfg.POLY_APPROX_FACTOR * peri, True)
+                block_type, tri_orient = _classify_polygon(cnt, approx, (x, y, w, h))
+                vertices = approx.reshape(-1, 2)
+
+            hp = _read_hp(frame, x, y, w, h)
+            blocks.append(Block(
+                x=x, y=y, w=w, h=h,
+                cx=x + w / 2.0, cy=y + h / 2.0,
+                block_type=block_type, hp=hp,
+                vertices=vertices,
+                tri_orientation=tri_orient,
+                row_index=r_top, col_index=c_left,
+            ))
+
+        elif cols_span == 2 and rows_span == 2:
+            # Candidato a bloco grande 2×2 — validar que as 4 cells estão preenchidas
+            # com a mesma cor (bloco real vs 3 blocos fundidos por morfologia)
+            r_min_2 = min(r_top, r_bot)
+            c_min_2 = min(c_left, c_right)
+            is_real_2x2 = True
+            cell_fills = []
+            for ri in range(r_min_2, r_min_2 + 2):
+                for ci in range(c_min_2, c_min_2 + 2):
+                    cy1 = max(0, cfg.LEVEL_TOPS[ri])
+                    cy2 = min(mask.shape[0], cfg.LEVEL_BOTS[ri])
+                    cx1 = max(0, cfg.COL_LEFTS[ci])
+                    cx2 = min(mask.shape[1], cfg.COL_RIGHTS[ci])
+                    cell_roi = mask[cy1:cy2, cx1:cx2]
+                    if cell_roi.size == 0:
+                        is_real_2x2 = False
+                        break
+                    fill = np.count_nonzero(cell_roi) / cell_roi.size
+                    cell_fills.append(fill)
+                    if fill < 0.50:
+                        is_real_2x2 = False
+                        break
+                if not is_real_2x2:
+                    break
+
+            # Verifica cor uniforme: uma única color range deve cobrir >50% de toda a área
+            if is_real_2x2:
+                bx1 = max(0, cfg.COL_LEFTS[c_min_2])
+                bx2 = min(hsv.shape[1], cfg.COL_RIGHTS[c_min_2 + 1])
+                by1 = max(0, cfg.LEVEL_TOPS[r_min_2 + 1])
+                by2 = min(hsv.shape[0], cfg.LEVEL_BOTS[r_min_2])
+                block_hsv = hsv[by1:by2, bx1:bx2]
+                block_area = block_hsv.shape[0] * block_hsv.shape[1]
+                color_ok = False
+                for _name, low, high in cfg.BLOCK_COLOR_RANGES:
+                    color_mask = cv2.inRange(block_hsv, low, high)
+                    if np.count_nonzero(color_mask) > block_area * 0.40:
+                        color_ok = True
+                        break
+                if not color_ok:
+                    is_real_2x2 = False
+
+            if is_real_2x2:
+                peri = cv2.arcLength(cnt, True)
+                approx = cv2.approxPolyDP(cnt, cfg.POLY_APPROX_FACTOR * peri, True)
+                hp = _read_hp(frame, x, y, w, h)
+                blocks.append(Block(
+                    x=x, y=y, w=w, h=h,
+                    cx=x + w / 2.0, cy=y + h / 2.0,
+                    block_type=BlockType.SQUARE, hp=hp,
+                    vertices=approx.reshape(-1, 2),
+                    tri_orientation=TriangleOrientation.UNKNOWN,
+                    row_index=r_min_2, col_index=c_min_2,
+                ))
+            else:
+                # Não é 2x2 real — split em blocos individuais
+                r_min = min(r_top, r_bot)
+                r_max = max(r_top, r_bot)
+                c_min = min(c_left, c_right)
+                c_max = max(c_left, c_right)
+                for ri in range(r_min, r_max + 1):
+                    for ci in range(c_min, c_max + 1):
+                        cell_x = cfg.COL_LEFTS[ci]
+                        cell_w = cfg.COL_RIGHTS[ci] - cell_x
+                        cell_y = cfg.LEVEL_TOPS[ri]
+                        cell_h = cfg.LEVEL_BOTS[ri] - cell_y
+                        cy1 = max(0, cell_y)
+                        cy2 = min(mask.shape[0], cell_y + cell_h)
+                        cx1 = max(0, cell_x)
+                        cx2 = min(mask.shape[1], cell_x + cell_w)
+                        cell_roi = mask[cy1:cy2, cx1:cx2]
+                        if cell_roi.size == 0 or np.count_nonzero(cell_roi) < cell_w * cell_h * 0.15:
+                            continue
+                        cell_hp = _read_hp(frame, cell_x, cell_y, cell_w, cell_h)
+                        blocks.append(Block(
+                            x=cell_x, y=cell_y, w=cell_w, h=cell_h,
+                            cx=cell_x + cell_w / 2.0, cy=cell_y + cell_h / 2.0,
+                            block_type=BlockType.SQUARE, hp=cell_hp,
+                            vertices=np.array([[cell_x, cell_y]]),
+                            tri_orientation=TriangleOrientation.UNKNOWN,
+                            row_index=ri, col_index=ci,
+                        ))
+
+        else:
+            # Contornos fundidos (2×1, 1×2, etc.) — separa em blocos individuais
+            r_min = min(r_top, r_bot)
+            r_max = max(r_top, r_bot)
+            c_min = min(c_left, c_right)
+            c_max = max(c_left, c_right)
+            for ri in range(r_min, r_max + 1):
+                for ci in range(c_min, c_max + 1):
+                    cell_x = cfg.COL_LEFTS[ci]
+                    cell_w = cfg.COL_RIGHTS[ci] - cell_x
+                    cell_y = cfg.LEVEL_TOPS[ri]
+                    cell_h = cfg.LEVEL_BOTS[ri] - cell_y
+                    # Verifica se a célula realmente tem conteúdo de bloco
+                    cy1 = max(0, cell_y)
+                    cy2 = min(mask.shape[0], cell_y + cell_h)
+                    cx1 = max(0, cell_x)
+                    cx2 = min(mask.shape[1], cell_x + cell_w)
+                    cell_roi = mask[cy1:cy2, cx1:cx2]
+                    if cell_roi.size == 0 or np.count_nonzero(cell_roi) < cell_w * cell_h * 0.15:
+                        continue
+                    cell_hp = _read_hp(frame, cell_x, cell_y, cell_w, cell_h)
+                    blocks.append(Block(
+                        x=cell_x, y=cell_y, w=cell_w, h=cell_h,
+                        cx=cell_x + cell_w / 2.0, cy=cell_y + cell_h / 2.0,
+                        block_type=BlockType.SQUARE, hp=cell_hp,
+                        vertices=np.array([[cell_x, cell_y]]),
+                        tri_orientation=TriangleOrientation.UNKNOWN,
+                        row_index=ri, col_index=ci,
+                    ))
 
     return blocks
 
@@ -360,6 +715,8 @@ def detect_powerups(frame: np.ndarray) -> List[PowerUp]:
             circularity = 4 * np.pi * area / (peri * peri)
             if circularity > 0.6:
                 (cx, cy), radius = cv2.minEnclosingCircle(cnt)
+                if radius < 7 or radius > 15:
+                    continue
                 if ptype == "LASER":
                     final_type = _detect_laser_orientation(gray, cx, cy, radius)
                 else:
@@ -468,6 +825,26 @@ def count_balls(frame: np.ndarray) -> int:
 
 
 # ─────────────────────────────────────────────
+# DETECÇÃO DE FIM DE RODADA
+# ─────────────────────────────────────────────
+
+
+def detect_round_end() -> bool:
+    """
+    Verifica se pelo menos 2 das 4 regiões indicadoras contêm a cor rosa.
+    """
+    hits = 0
+    for (rx, ry, rw, rh) in cfg.ROUND_END_REGIONS:
+        mon = {"top": ry, "left": rx, "width": rw, "height": rh}
+        img = np.array(_sct.grab(mon), dtype=np.uint8)[:, :, :3]
+        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+        mask = cv2.inRange(hsv, cfg.ROUND_END_HSV_LOW, cfg.ROUND_END_HSV_HIGH)
+        if np.count_nonzero(mask) > mask.size * 0.1:
+            hits += 1
+    return hits >= 2
+
+
+# ─────────────────────────────────────────────
 # DETECÇÃO DE GAME OVER (tela branca)
 # ─────────────────────────────────────────────
 
@@ -516,7 +893,9 @@ def scan_game() -> GameState:
     blocks = detect_blocks(frame)
     powerups = detect_powerups(frame)
     ball_pos = detect_ball(frame)
-    n_balls = count_balls(frame)
+    n_balls = read_ball_count_template()
+    if n_balls == 0:
+        n_balls = count_balls(frame)
 
     ball_x = ball_pos[0] if ball_pos else None
     ball_y = ball_pos[1] if ball_pos else None
