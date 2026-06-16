@@ -493,6 +493,20 @@ def detect_blocks(frame: np.ndarray) -> List[Block]:
         r_top = _get_row_index(y + _MARGIN)
         r_bot = _get_row_index(y + h - _MARGIN)
 
+        _MAX_OVERSHOOT = cfg.BLOCK_SIZE // 2
+        if r_top == -1 and r_bot != -1:
+            if y + _MARGIN >= cfg.LEVEL_TOPS[-1] - _MAX_OVERSHOOT:
+                r_top = r_bot
+        if r_bot == -1 and r_top != -1:
+            if y + h - _MARGIN <= cfg.LEVEL_BOTS[0] + _MAX_OVERSHOOT:
+                r_bot = r_top
+        if c_left == -1 and c_right != -1:
+            if x + _MARGIN >= cfg.COL_LEFTS[0] - _MAX_OVERSHOOT:
+                c_left = c_right
+        if c_right == -1 and c_left != -1:
+            if x + w - _MARGIN <= cfg.COL_RIGHTS[-1] + _MAX_OVERSHOOT:
+                c_right = c_left
+
         if -1 in (c_left, c_right, r_top, r_bot):
             continue
 
