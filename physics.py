@@ -32,6 +32,7 @@ class SimResult:
     powerups_collected: int
     extra_balls_collected: int = 0
     path: List[Tuple[float, float]] = field(default_factory=list)
+    collisions: List[Tuple[float, float]] = field(default_factory=list)
     hit_details: List[str] = field(default_factory=list)
 
 
@@ -286,11 +287,13 @@ def _sim_one_ball(
     powerups: List[PowerUp],
     collected_pus: set,
     record_path: bool = False,
-) -> Tuple[List[Tuple[int, int]], set, List[Tuple[float, float]]]:
+) -> Tuple[List[Tuple[int, int]], set, List[Tuple[float, float]], List[Tuple[float, float]]]:
     """
     Simula UMA bola (1 dano por colisão). Não altera block_hp externo.
-    Retorna (hit_sequence, new_pu_indices, path).
+    Retorna (hit_sequence, new_pu_indices, path, collisions).
     hit_sequence: [(block_id, row_index), ...] em ordem de colisão.
+    collisions: posicoes onde a bola colidiu (paredes, blocos, triangulos).
+      So eh populado quando record_path=True.
     """
     angle_rad = math.radians(angle_deg)
     vel = Vec2(math.cos(angle_rad), -math.sin(angle_rad))
@@ -303,6 +306,7 @@ def _sim_one_ball(
     hit_seq: List[Tuple[int, int]] = []
     new_pus: set = set()
     path: List[Tuple[float, float]] = []
+    collisions: List[Tuple[float, float]] = []
     went_up = False
 
     for step in range(cfg.MAX_SIM_STEPS):
@@ -317,13 +321,19 @@ def _sim_one_ball(
         if pos.x - radius <= cfg.WALL_LEFT:
             pos.x = cfg.WALL_LEFT + radius
             vel.x = abs(vel.x)
+            if record_path:
+                collisions.append(pos.as_tuple())
         elif pos.x + radius >= cfg.WALL_RIGHT:
             pos.x = cfg.WALL_RIGHT - radius
             vel.x = -abs(vel.x)
+            if record_path:
+                collisions.append(pos.as_tuple())
 
         if pos.y - radius <= cfg.WALL_TOP:
             pos.y = cfg.WALL_TOP + radius
             vel.y = abs(vel.y)
+            if record_path:
+                collisions.append(pos.as_tuple())
 
         if went_up and pos.y + radius >= effective_bottom:
             break
@@ -340,6 +350,8 @@ def _sim_one_ball(
                 )
 
             if normal is not None:
+                if record_path:
+                    collisions.append(pos.as_tuple())
                 vel_new = vel.reflect(normal)
                 vel.x = vel_new.x
                 vel.y = vel_new.y
@@ -354,7 +366,7 @@ def _sim_one_ball(
             if _collide_powerup(pos, radius, pu):
                 new_pus.add(i)
 
-    return hit_seq, new_pus, path
+    return hit_seq, new_pus, path, collisions
 
 
 def simulate_trajectory(
@@ -386,13 +398,14 @@ def simulate_trajectory(
     total_pu = 0
     total_extra = 0
     first_path: List[Tuple[float, float]] = []
+    first_collisions: List[Tuple[float, float]] = []
 
     remaining = ball_count
 
     while remaining > 0:
         active = [b for b in blocks if block_hp.get(id(b), 0) > 0]
 
-        hit_seq, new_pus, path = _sim_one_ball(
+        hit_seq, new_pus, path, collisions = _sim_one_ball(
             start_x, start_y, angle_deg, active, block_hp,
             powerups, collected_pus,
             record_path=(record_path and not first_path),
@@ -400,6 +413,7 @@ def simulate_trajectory(
 
         if record_path and not first_path:
             first_path = path
+            first_collisions = collisions
 
         # ── Power-ups (coletados pela primeira bola do batch) ──
         laser_fired = False
@@ -482,6 +496,7 @@ def simulate_trajectory(
         powerups_collected=total_pu,
         extra_balls_collected=total_extra,
         path=first_path if record_path else [],
+        collisions=first_collisions if record_path else [],
     )
 
 

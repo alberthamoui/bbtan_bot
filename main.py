@@ -56,6 +56,12 @@ def parse_args():
         default=0,
         help="Override: numero fixo de bolas (0 = detectar visualmente)",
     )
+    parser.add_argument(
+        "--animate",
+        action="store_true",
+        help="Visualizacao animada do dry-run (Phase 1: angulos candidatos, "
+             "Phase 2: bola percorrendo a melhor trajetoria). Nao executa disparos.",
+    )
     return parser.parse_args()
 
 
@@ -159,6 +165,17 @@ def run_turn(
 
 def main():
     args = parse_args()
+
+    if args.animate:
+        if args.delay > 0:
+            print(f"Iniciando em {args.delay:.0f}s — posicione o jogo!")
+            time.sleep(args.delay)
+        from tools.animate_dryrun import run_animate
+        try:
+            run_animate()
+        finally:
+            cv2.destroyAllWindows()
+        return
 
     print("=" * 50)
     print("  BBTAN Bot")

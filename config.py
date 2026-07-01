@@ -7,17 +7,31 @@ Use o script calibrate.py (incluso) para descobrir os valores certos.
 
 import numpy as np
 
+def printVisivel(x):
+    print("\n")
+    print("---"*20)
+    print("\n")
+    print(x)
+    print("\n")
+    print("---"*20)
+    print("\n")
+
 # ─────────────────────────────────────────────
 # REGIÃO DO JOGO NA TELA (x, y, largura, altura)
 # Rode calibrate.py para pegar esses valores
 # ─────────────────────────────────────────────
-GAME_REGION = (1353, 245, 451, 577)
+# antigo: (1353, 245, 451, 577)
+GAME_REGION = (1352, 244, 452, 578)
 
 # Margens internas da área jogável (pixels relativos à GAME_REGION)
-WALL_LEFT = 5
-WALL_RIGHT = GAME_REGION[2] - 5
-WALL_TOP = 5
-WALL_BOTTOM = GAME_REGION[3] - 10  # acima do robô/bola
+# antigo: WALL_LEFT = 5
+WALL_LEFT = 0
+# antigo: WALL_RIGHT = GAME_REGION[2] - 5  (=446)
+WALL_RIGHT = 449
+# antigo: WALL_TOP = 5
+WALL_TOP = 2
+# antigo: WALL_BOTTOM = GAME_REGION[3] - 10  (=567)  # acima do robô/bola
+WALL_BOTTOM = 575
 
 # Grid do BBTAN: 7 colunas
 GRID_COLUMNS = 7
@@ -32,6 +46,11 @@ COL_RIGHTS = [63, 128, 191, 255, 318, 382, 444]
 _GRID_TOP_Y = 67  # Y do topo da fileira mais alta (calibrar se mudar GAME_REGION)
 LEVEL_TOPS = [_GRID_TOP_Y + (6 - i) * BLOCK_SIZE for i in range(7)]
 LEVEL_BOTS = [_GRID_TOP_Y + (7 - i) * BLOCK_SIZE - 1 for i in range(7)]
+# antigo: LEVEL_BOTS[0] = 514 (=_GRID_TOP_Y + 7*BLOCK_SIZE - 1). Cortava 1px
+# do bloco da fileira mais baixa; ajustado pra bater exato com a base do bloco.
+# antigo (tentativa anterior): LEVEL_BOTS[0] = WALL_BOTTOM = 575, mas esticava
+# a fileira ate a base do playfield e fazia o codigo detectar o player como bloco.
+LEVEL_BOTS[0] = 513
 LEVELS = [(t + b) // 2 for t, b in zip(LEVEL_TOPS, LEVEL_BOTS)]
 
 
