@@ -151,7 +151,8 @@ EXPECTED_BLOCK_SIZE = BLOCK_SIZE
 # BALL_RADIUS   = max(3, int(BLOCK_SIZE * 0.22))  # pixels
 
 # Raio da bola = 1.77mm. Bloco = 8mm → fator = 1.77/8 ≈ 0.22
-BALL_RADIUS = max(3, int(BLOCK_SIZE * 0.50))  # antigo: raio 4mm
+# BALL_RADIUS = max(3, int(BLOCK_SIZE * 0.50))  # antigo: raio 4mm
+BALL_RADIUS = max(3, int(BLOCK_SIZE * 0.40))
 # BALL_RADIUS = max(3, int(BLOCK_SIZE * 0.22))
 
 BALL_SPEED = 8.0  # pixels por step da simulação
@@ -171,6 +172,7 @@ SCORE_ROW0_SURVIVE_PENALTY = 100  # penalidade por HP restante em blocos da row 
 # Pesos para ranking (weighted_hits)
 DESTROY_WEIGHT = 5      # bônus por bloco destruído (multiplicado por ROW_MULTIPLIER)
 EXTRA_BALL_WEIGHT = 30  # bônus por bola extra coletada (abaixo de row 0/1, acima do resto)
+BONUS_B_WEIGHT = 5      # bônus pequeno por moeda B coletada (~2 hits em row 2)
 
 # Multiplicadores por fileira (índice 0 = mais baixa, LEVELS[0]=480)
 # antigo: 0:15, 1:5

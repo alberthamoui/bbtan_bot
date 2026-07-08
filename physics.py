@@ -33,6 +33,11 @@ class SimResult:
     extra_balls_collected: int = 0
     path: List[Tuple[float, float]] = field(default_factory=list)
     collisions: List[Tuple[float, float]] = field(default_factory=list)
+    # Um path/collisions POR BOLA lancada (so com record_path=True). Bolas
+    # posteriores seguem trajetorias re-simuladas apos blocos destruidos —
+    # usado pelo animate_dryrun pra nao repetir o path da 1a bola em todas.
+    ball_paths: List[List[Tuple[float, float]]] = field(default_factory=list)
+    ball_collisions: List[List[Tuple[float, float]]] = field(default_factory=list)
     hit_details: List[str] = field(default_factory=list)
 
 
@@ -241,18 +246,27 @@ def _apply_laser(
     blocks: List[Block],
     block_hp: dict,
     ball_count: int,
-) -> Tuple[float, int]:
+) -> Tuple[float, int, float, int, int]:
     """
     Efeito do laser: LASER_H ataca blocos na mesma linha (Y),
     LASER_V ataca blocos na mesma coluna (X).
-    Retorna (score_ganho, blocos_destruidos).
+    Retorna (score_ganho, blocos_destruidos, weighted_ganho, danger_hits, hits).
+
+    weighted/danger/hits usam a mesma contabilidade dos hits de bola
+    (dano efetivo limitado ao HP restante, ROW_MULTIPLIERS por fileira,
+    DESTROY_WEIGHT ao destruir) para que o laser conte no ranking de
+    find_best_angle — antes ele so somava em score (display).
     """
     score = 0.0
     destroyed = 0
+    weighted = 0.0
+    danger = 0
+    hits = 0
     half_cell = cfg.BLOCK_SIZE / 2
 
     for block in blocks:
-        if block_hp.get(id(block), 0) <= 0:
+        hp = block_hp.get(id(block), 0)
+        if hp <= 0:
             continue
 
         if pu.power_up_type == PowerUpType.LASER_H:
@@ -262,15 +276,21 @@ def _apply_laser(
         if not hit:
             continue
 
+        effective = min(ball_count, hp)
         block_hp[id(block)] -= ball_count
         row_mult = cfg.ROW_MULTIPLIERS.get(block.row_index, 1.0)
         score += cfg.SCORE_HIT_BLOCK * ball_count * row_mult
+        hits += effective
+        weighted += row_mult * effective
+        if block.row_index <= 1:
+            danger += effective
 
         if block_hp[id(block)] <= 0:
             destroyed += 1
             score += cfg.SCORE_DESTROY_BLOCK * row_mult
+            weighted += row_mult * cfg.DESTROY_WEIGHT
 
-    return score, destroyed
+    return score, destroyed, weighted, danger, hits
 
 
 # ─────────────────────────────────────────────
@@ -399,6 +419,8 @@ def simulate_trajectory(
     total_extra = 0
     first_path: List[Tuple[float, float]] = []
     first_collisions: List[Tuple[float, float]] = []
+    ball_paths: List[List[Tuple[float, float]]] = []
+    ball_collisions: List[List[Tuple[float, float]]] = []
 
     remaining = ball_count
 
@@ -408,7 +430,7 @@ def simulate_trajectory(
         hit_seq, new_pus, path, collisions = _sim_one_ball(
             start_x, start_y, angle_deg, active, block_hp,
             powerups, collected_pus,
-            record_path=(record_path and not first_path),
+            record_path=record_path,
         )
 
         if record_path and not first_path:
@@ -422,9 +444,12 @@ def simulate_trajectory(
             total_pu += 1
             pu = powerups[pi]
             if pu.power_up_type in (PowerUpType.LASER_H, PowerUpType.LASER_V):
-                ls, ld = _apply_laser(pu, blocks, block_hp, 1)
+                ls, ld, lw, ldg, lh = _apply_laser(pu, blocks, block_hp, 1)
                 total_score += ls
                 total_destroyed += ld
+                total_weighted += lw
+                total_danger += ldg
+                total_hits += lh
                 laser_fired = True
             elif pu.power_up_type == PowerUpType.EXTRA_BALL:
                 total_extra += 1
@@ -432,8 +457,15 @@ def simulate_trajectory(
                 total_weighted += cfg.EXTRA_BALL_WEIGHT
             else:
                 total_score += cfg.SCORE_HIT_POWERUP
+                if pu.power_up_type == PowerUpType.BONUS_B:
+                    total_weighted += cfg.BONUS_B_WEIGHT
 
         if not hit_seq:
+            # Nada mais pra acertar — as bolas restantes seguem esta mesma
+            # trajetoria (nenhum bloco muda de estado daqui pra frente).
+            if record_path:
+                ball_paths.extend([path] * remaining)
+                ball_collisions.extend([collisions] * remaining)
             break
 
         # ── Batch: quantas bolas seguem esta mesma trajetória? ──
@@ -443,7 +475,11 @@ def simulate_trajectory(
             hits_per_block[bid] = hits_per_block.get(bid, 0) + 1
             row_of[bid] = ridx
 
-        if laser_fired:
+        if laser_fired or record_path:
+            # record_path: simula 1 bola por voo pra gravar o path exato de
+            # CADA bola (o batch reutilizaria o path da 1a bola para o batch
+            # inteiro, inclusive apos o bloco quebrar). So roda no re-simulate
+            # do melhor angulo, entao o custo extra e desprezivel.
             batch = 1
         else:
             batch = remaining
@@ -452,6 +488,10 @@ def simulate_trajectory(
                 if hp > 0 and nh > 0:
                     batch = min(batch, math.ceil(hp / nh))
             batch = max(1, batch)
+
+        if record_path:
+            ball_paths.extend([path] * batch)
+            ball_collisions.extend([collisions] * batch)
 
         # ── Aplica dano do batch ──
         for bid, nh in hits_per_block.items():
@@ -497,6 +537,8 @@ def simulate_trajectory(
         extra_balls_collected=total_extra,
         path=first_path if record_path else [],
         collisions=first_collisions if record_path else [],
+        ball_paths=ball_paths if record_path else [],
+        ball_collisions=ball_collisions if record_path else [],
     )
 
 
