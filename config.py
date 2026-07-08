@@ -7,15 +7,6 @@ Use o script calibrate.py (incluso) para descobrir os valores certos.
 
 import numpy as np
 
-def printVisivel(x):
-    print("\n")
-    print("---"*20)
-    print("\n")
-    print(x)
-    print("\n")
-    print("---"*20)
-    print("\n")
-
 # ─────────────────────────────────────────────
 # REGIÃO DO JOGO NA TELA (x, y, largura, altura)
 # Rode calibrate.py para pegar esses valores
@@ -152,8 +143,9 @@ EXPECTED_BLOCK_SIZE = BLOCK_SIZE
 
 # Raio da bola = 1.77mm. Bloco = 8mm → fator = 1.77/8 ≈ 0.22
 # BALL_RADIUS = max(3, int(BLOCK_SIZE * 0.50))  # antigo: raio 4mm
-BALL_RADIUS = max(3, int(BLOCK_SIZE * 0.40))
+# BALL_RADIUS = max(3, int(BLOCK_SIZE * 0.40))
 # BALL_RADIUS = max(3, int(BLOCK_SIZE * 0.22))
+BALL_RADIUS = 9
 
 BALL_SPEED = 8.0  # pixels por step da simulação
 MAX_SIM_STEPS = 2000  # limite de passos por simulação de ângulo
@@ -195,8 +187,8 @@ ROW_MULTIPLIERS = {
 # ─────────────────────────────────────────────
 # ÂNGULOS DE BUSCA
 # ─────────────────────────────────────────────
-ANGLE_MIN = 10  # graus (0 = direita pura, 90 = cima, 180 = esquerda)
-ANGLE_MAX = 170
+ANGLE_MIN = 19  # graus (0 = direita pura, 90 = cima, 180 = esquerda)
+ANGLE_MAX = 161  # simetrico: 180 - 19
 ANGLE_STEP = 1  # resolução da busca (1° = 160 simulações)
 
 # ─────────────────────────────────────────────

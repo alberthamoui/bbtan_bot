@@ -161,11 +161,3 @@ def wait_for_turn_end_smart(ball_y_threshold: float = None):
 
     # Timeout — continua mesmo assim
     time.sleep(0.5)
-
-
-if __name__ == "__main__":
-    # Teste: mostra onde o bot clicaria para cada ângulo
-    print("Teste de coordenadas de tiro:")
-    for angle in [30, 60, 90, 120, 150]:
-        sx, sy, tx, ty = angle_to_screen_coords(225, 550, angle)
-        print(f"  {angle:3d}° -> start=({sx:.0f},{sy:.0f}) target=({tx:.0f},{ty:.0f})")

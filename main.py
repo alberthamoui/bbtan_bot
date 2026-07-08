@@ -51,12 +51,6 @@ def parse_args():
         "--max-turns", type=int, default=0, help="Limite de turnos (0 = infinito)"
     )
     parser.add_argument(
-        "--balls",
-        type=int,
-        default=0,
-        help="Override: numero fixo de bolas (0 = detectar visualmente)",
-    )
-    parser.add_argument(
         "--animate",
         action="store_true",
         help="Visualizacao animada do dry-run (Phase 1: angulos candidatos, "
@@ -67,8 +61,6 @@ def parse_args():
 
 def run_turn(
     state: GameState,
-    ball_count_override: int = 0,
-    current_ball_count: int = 1,
     debug: bool = False,
     dry_run: bool = False,
 ):
@@ -92,12 +84,7 @@ def run_turn(
 
     ball_x = state.ball_x
     ball_y = state.ball_y
-    if ball_count_override > 0:
-        ball_count = ball_count_override
-    elif state.detected_ball_count > 0:
-        ball_count = state.detected_ball_count
-    else:
-        ball_count = current_ball_count
+    ball_count = max(1, state.detected_ball_count)
 
     print(f"  Bola: ({ball_x:.0f}, {ball_y:.0f})  |  Bolas: {ball_count}")
     print(f"  Blocos: {len(state.blocks)}  |  Power-ups: {len(state.powerups)}")
@@ -211,7 +198,6 @@ def main():
         time.sleep(args.delay)
 
     turn = 0
-    ball_count = 1
     consecutive_fails = 0
     max_fails = 5
     last_block_fingerprint = None
@@ -235,8 +221,6 @@ def main():
 
             status = run_turn(
                 state=state,
-                ball_count_override=args.balls,
-                current_ball_count=ball_count,
                 debug=args.debug,
                 dry_run=args.dry_run,
             )
@@ -245,12 +229,12 @@ def main():
                 turnos_sobrevividos = turn - 1
                 print(f"\n{'='*50}")
                 print(f"  GAME OVER — Score final apos {turnos_sobrevividos} turnos")
-                print(f"  Bolas no ultimo turno: {ball_count}")
+                print(f"  Bolas no ultimo turno: {state.detected_ball_count}")
                 print(f"{'='*50}")
 
                 from datetime import datetime
                 with open("historico.txt", "a", encoding="utf-8") as f:
-                    f.write(f"{datetime.now():%Y-%m-%d %H:%M:%S} | Turnos: {turnos_sobrevividos} | Bolas: {ball_count}\n")
+                    f.write(f"{datetime.now():%Y-%m-%d %H:%M:%S} | Turnos: {turnos_sobrevividos} | Bolas: {state.detected_ball_count}\n")
 
                 if not args.dry_run:
                     import pyautogui
@@ -263,7 +247,6 @@ def main():
                             time.sleep(4)
 
                 turn = 0
-                ball_count = 1
                 consecutive_fails = 0
                 last_block_fingerprint = None
                 stale_turns = 0
@@ -286,9 +269,6 @@ def main():
                         import pyautogui
                         pyautogui.click(1580, 961)
                     stale_turns = 0
-
-                if args.balls > 0:
-                    ball_count = args.balls
 
                 # Aguarda fim da rodada (polling visual das 4 regiões rosa)
                 print("  Aguardando fim da rodada...")

@@ -581,34 +581,3 @@ def find_best_angle(
     )
 
     return best_with_path, all_results
-
-
-if __name__ == "__main__":
-    # Teste rápido com blocos fictícios
-    test_blocks = [
-        Block(
-            x=100, y=50, w=50, h=50, cx=125, cy=75, block_type=BlockType.SQUARE, hp=2
-        ),
-        Block(
-            x=200, y=100, w=50, h=50, cx=225, cy=125, block_type=BlockType.SQUARE, hp=1
-        ),
-    ]
-    test_pus = [PowerUp(cx=350, cy=80, radius=12)]
-
-    best, all_res = find_best_angle(
-        ball_x=225,
-        ball_y=550,
-        blocks=test_blocks,
-        powerups=test_pus,
-    )
-
-    print(f"Melhor angulo: {best.angle}°")
-    print(f"  Score: {best.score}")
-    print(f"  Hits: {best.total_hits}")
-    print(f"  Destruidos: {best.blocks_destroyed}")
-    print(f"  Power-ups: {best.powerups_collected}")
-    print(f"\nTop 5 angulos:")
-    for r in all_res[:5]:
-        print(
-            f"  {r.angle:6.1f}° -> score={r.score:.0f}  hits={r.total_hits}  destroyed={r.blocks_destroyed}"
-        )

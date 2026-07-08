@@ -10,5 +10,26 @@ notes.md
 image.png
 bash.exe.stackdump
 historico.txt
-SITUACAO_ATUAL_PROJETO.md
+situacao_atual.md
 plano_melhorias.md
+
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Linter / formatter cache
+.ruff_cache/
+
+# Arquivos gerados em runtime
+historico.txt
+*.stackdump
+
+# Imagens temporarias / screenshots de debug
+image.png
+tools/grid_diagnostic.png
+tools/screenshot.png
+
+# Notebooks (scratch)
+tools/test.ipynb
