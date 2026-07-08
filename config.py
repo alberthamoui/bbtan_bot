@@ -204,3 +204,8 @@ CONFIDENCE = 0.8  # confiança mínima para template matching (se usar)
 SPEED_UP_X = 1789
 SPEED_UP_Y = 958
 SPEED_UP_DELAY = 0.3  # segundos após o disparo para clicar
+
+# ─────────────────────────────────────────────
+# DEBUG / VERBOSIDADE
+# ─────────────────────────────────────────────
+VISION_VERBOSE = False

@@ -429,7 +429,7 @@ def _get_block_text_mask(roi_bgr: np.ndarray, is_triangle: bool = False) -> np.n
         dark = cv2.inRange(v_channel, 0, 130)
         text_mask = cv2.bitwise_and(dark, block_region)
 
-        if is_triangle:
+        if is_triangle and cfg.VISION_VERBOSE:
             print(
                 f"[TRI hp_mask] block_region={int(np.count_nonzero(block_region))}"
                 f"  dark={int(np.count_nonzero(dark))}"
@@ -586,16 +586,18 @@ def _qualifies_as_big_block(
     dim_lo = int(expected * (1 - tolerance))               # limite inferior da faixa (~108 com tolerance=0.15)
     dim_hi = int(expected * (1 + tolerance))               # limite superior (~147)
     if not (dim_lo <= w <= dim_hi and dim_lo <= h <= dim_hi):  # w OU h fora da faixa -> nao eh 2x2
-        print(
-            f"[big-block reject dim] bbox=({x},{y}) {w}x{h}"
-            f"  faixa=[{dim_lo}..{dim_hi}]"                # mostra o intervalo aceito pra deixar obvio o quao longe deu
-        )
+        if cfg.VISION_VERBOSE:
+            print(
+                f"[big-block reject dim] bbox=({x},{y}) {w}x{h}"
+                f"  faixa=[{dim_lo}..{dim_hi}]"
+            )
         return False                                       # dim errada -> ja retorna, nem chega na cor
 
     # --- Checagem 2: cor uniforme dominante ---
     roi = hsv[y:y + h, x:x + w]                            # recorta a bbox no frame HSV
     if roi.size == 0:                                      # bbox degenerada (fora do frame etc)
-        print(f"[big-block reject roi-empty] bbox=({x},{y}) {w}x{h}")
+        if cfg.VISION_VERBOSE:
+            print(f"[big-block reject roi-empty] bbox=({x},{y}) {w}x{h}")
         return False                                       # sem dados -> rejeita
 
     color_counts = []                                      # lista (nome, nnz) pra ranking depois
@@ -605,19 +607,21 @@ def _qualifies_as_big_block(
 
     total_masked = sum(nnz for _, nnz in color_counts)     # soma de pixels ativados em QUALQUER cor (denominador da dominancia)
     if total_masked == 0:                                  # ROI nao ativou nenhuma cor conhecida (ex: fundo preto)
-        print(f"[big-block reject no-color] bbox=({x},{y}) {w}x{h}")
+        if cfg.VISION_VERBOSE:
+            print(f"[big-block reject no-color] bbox=({x},{y}) {w}x{h}")
         return False                                       # sem cor -> nao eh bloco
 
     color_counts.sort(key=lambda t: -t[1])                 # ordena decrescente por nnz (top color primeiro)
     dominant_name, dominant_nnz = color_counts[0]          # cor com mais pixels ativados
     dominance = dominant_nnz / total_masked                # fracao do total mascarado que a cor top domina
     if dominance < dominance_threshold:                    # abaixo de 80% -> ha outra cor competindo significativamente
-        top3 = [(n, c) for n, c in color_counts[:3] if c > 0]  # top-3 pra debug (ignora cores zeradas)
-        print(
-            f"[big-block reject color-mix] bbox=({x},{y}) {w}x{h}"
-            f"  dominante={dominant_name}={dominance:.0%}"  # % da cor top no masked total
-            f"  top3={top3}"                                # mostra as 3 mais ativadas pra entender o mix
-        )
+        if cfg.VISION_VERBOSE:
+            top3 = [(n, c) for n, c in color_counts[:3] if c > 0]
+            print(
+                f"[big-block reject color-mix] bbox=({x},{y}) {w}x{h}"
+                f"  dominante={dominant_name}={dominance:.0%}"
+                f"  top3={top3}"
+            )
         return False                                       # mistura de cores -> cluster de blocos, nao 2x2
 
     # --- Checagem 3: contagem de numeros de HP ---
@@ -655,11 +659,12 @@ def _qualifies_as_big_block(
             avg_x = sum(p[0] for p in cluster) / len(cluster)
             avg_y = sum(p[1] for p in cluster) / len(cluster)
             cluster_centers.append((int(avg_x), int(avg_y), len(cluster)))
-        print(
-            f"[big-block reject hp-count] bbox=({x},{y}) {w}x{h}"
-            f"  n_HPs={len(clusters)}"                     # quantos numeros distintos foram encontrados
-            f"  centros(x,y,digitos)={cluster_centers}"    # posicao de cada HP no ROI
-        )
+        if cfg.VISION_VERBOSE:
+            print(
+                f"[big-block reject hp-count] bbox=({x},{y}) {w}x{h}"
+                f"  n_HPs={len(clusters)}"
+                f"  centros(x,y,digitos)={cluster_centers}"
+            )
         return False                                       # multiplos HPs -> multiplos blocos, rejeita
 
     return True                                            # passou dim + cor + hp-count -> qualifica como 2x2 unico
@@ -700,7 +705,7 @@ def detect_blocks(frame: np.ndarray) -> List[Block]:
 
         # DEBUG: rastreia contornos grandes (>= 2 blocos de área)
         _is_big = area >= cfg.BLOCK_SIZE * cfg.BLOCK_SIZE * 2
-        if _is_big:
+        if _is_big and cfg.VISION_VERBOSE:
             print(
                 f"[contour] area={int(area)} bbox=({x},{y}) {w}x{h}"
                 f"  MAX={int(cfg.MAX_BLOCK_AREA)}"
@@ -767,10 +772,11 @@ def detect_blocks(frame: np.ndarray) -> List[Block]:
                         "vertices": vertices,
                     })
 
-            print(
-                f"[big-area phase1] area={int(area)}"
-                f"  survivors={[(7 - s['ri'], s['ci']) for s in survivors]}"
-            )
+            if cfg.VISION_VERBOSE:
+                print(
+                    f"[big-area phase1] area={int(area)}"
+                    f"  survivors={[(7 - s['ri'], s['ci']) for s in survivors]}"
+                )
 
             # Fase 2: tenta agrupar quadrados em blocos 2×2 da mesma cor.
             # Sem isso, um bloco grande 2×2 com HP de 3 dígitos (ex: rosa "107")
@@ -806,20 +812,22 @@ def detect_blocks(frame: np.ndarray) -> List[Block]:
                         color_nnz_2x2[_name] = nnz
                         if cov > 0.40:
                             color_ok = True
-                    print(
-                        f"[big-area gate] L{7 - r_orig}-L{7 - (r_orig + 1)}"
-                        f" C{c_orig}-C{c_orig + 1}"
-                        f"  bbox=({bx1},{by1})-({bx2},{by2})"
-                        f"  block_hsv={block_hsv.shape}"
-                        f"  area={block_area_2x2}"
-                        f"  nnz={color_nnz_2x2}"
-                        f"  ok={color_ok}"
-                    )
-                    if not color_ok:
+                    if cfg.VISION_VERBOSE:
                         print(
-                            f"[big-area 2x2 reject] L{7 - r_orig}-L{7 - (r_orig + 1)}"
-                            f" C{c_orig}-C{c_orig + 1}  color_cov={color_cov_2x2}"
+                            f"[big-area gate] L{7 - r_orig}-L{7 - (r_orig + 1)}"
+                            f" C{c_orig}-C{c_orig + 1}"
+                            f"  bbox=({bx1},{by1})-({bx2},{by2})"
+                            f"  block_hsv={block_hsv.shape}"
+                            f"  area={block_area_2x2}"
+                            f"  nnz={color_nnz_2x2}"
+                            f"  ok={color_ok}"
                         )
+                    if not color_ok:
+                        if cfg.VISION_VERBOSE:
+                            print(
+                                f"[big-area 2x2 reject] L{7 - r_orig}-L{7 - (r_orig + 1)}"
+                                f" C{c_orig}-C{c_orig + 1}  color_cov={color_cov_2x2}"
+                            )
                         continue
                     bw_2x2 = bx2 - bx1
                     bh_2x2 = by2 - by1
@@ -828,11 +836,12 @@ def detect_blocks(frame: np.ndarray) -> List[Block]:
                     # esticada (ex: R0 pos-ajuste) ou onde 4 cells de cores diferentes
                     # foram agrupadas por engano.
                     if not _qualifies_as_big_block(hsv, bx1, by1, bw_2x2, bh_2x2):
-                        print(
-                            f"[big-area 2x2 reject big-block] L{7 - r_orig}-L{7 - (r_orig + 1)}"
-                            f" C{c_orig}-C{c_orig + 1}  dim={bw_2x2}x{bh_2x2}"
-                            f"  (motivo detalhado no [big-block reject ...] acima)"
-                        )
+                        if cfg.VISION_VERBOSE:
+                            print(
+                                f"[big-area 2x2 reject big-block] L{7 - r_orig}-L{7 - (r_orig + 1)}"
+                                f" C{c_orig}-C{c_orig + 1}  dim={bw_2x2}x{bh_2x2}"
+                                f"  (motivo detalhado no [big-block reject ...] acima)"
+                            )
                         continue
                     hp_2x2, hp_mask_2x2 = _hp(
                         bx1, by1, bw_2x2, bh_2x2, row=r_orig, col=c_orig,
@@ -854,32 +863,34 @@ def detect_blocks(frame: np.ndarray) -> List[Block]:
                     ))
                     for c in cells_2x2:
                         consumed.add(c)
-                    print(
-                        f"[big-area 2x2] L{7 - r_orig}-L{7 - (r_orig + 1)}"
-                        f" C{c_orig}-C{c_orig + 1}  hp={hp_2x2}"
-                    )
-                    print(
-                        f"[GRID vs CONTOUR] big-area-2x2"
-                        f" L{7 - r_orig}-L{7 - (r_orig + 1)} C{c_orig}-C{c_orig + 1}"
-                        f" grid=({bx1},{by1},{bx2},{by2})"
-                        f" contour=({x},{y},{x + w},{y + h})"
-                    )
+                    if cfg.VISION_VERBOSE:
+                        print(
+                            f"[big-area 2x2] L{7 - r_orig}-L{7 - (r_orig + 1)}"
+                            f" C{c_orig}-C{c_orig + 1}  hp={hp_2x2}"
+                        )
+                        print(
+                            f"[GRID vs CONTOUR] big-area-2x2"
+                            f" L{7 - r_orig}-L{7 - (r_orig + 1)} C{c_orig}-C{c_orig + 1}"
+                            f" grid=({bx1},{by1},{bx2},{by2})"
+                            f" contour=({x},{y},{x + w},{y + h})"
+                        )
 
             # Fase 3: cells não consumidas viram blocos individuais.
             for s in survivors:
                 if (s["ri"], s["ci"]) in consumed:
                     continue
-                print(
-                    f"[big-area split] L{7 - s['ri']}C{s['ci']}"
-                    f"  block_type={s['block_type'].value}"
-                    f"  src_area={int(area)}"
-                )
-                print(
-                    f"[GRID vs CONTOUR] big-area-split L{7 - s['ri']}C{s['ci']}"
-                    f" grid=({s['cell_x']},{s['cell_y']},"
-                    f"{s['cell_x'] + s['cell_w']},{s['cell_y'] + s['cell_h']})"
-                    f" contour=({x},{y},{x + w},{y + h})"
-                )
+                if cfg.VISION_VERBOSE:
+                    print(
+                        f"[big-area split] L{7 - s['ri']}C{s['ci']}"
+                        f"  block_type={s['block_type'].value}"
+                        f"  src_area={int(area)}"
+                    )
+                    print(
+                        f"[GRID vs CONTOUR] big-area-split L{7 - s['ri']}C{s['ci']}"
+                        f" grid=({s['cell_x']},{s['cell_y']},"
+                        f"{s['cell_x'] + s['cell_w']},{s['cell_y'] + s['cell_h']})"
+                        f" contour=({x},{y},{x + w},{y + h})"
+                    )
                 cell_hp, cell_hp_mask = _hp(
                     s["cell_x"], s["cell_y"], s["cell_w"], s["cell_h"],
                     row=s["ri"], col=s["ci"],
@@ -981,12 +992,13 @@ def detect_blocks(frame: np.ndarray) -> List[Block]:
                 vertices = approx.reshape(-1, 2)
 
             is_tri_arg = (block_type == BlockType.TRIANGLE)
-            print(
-                f"[1x1 hp] L{7 - r_top}C{c_left}"
-                f"  block_type={block_type.value}"
-                f"  is_tri={is_tri_arg}"
-                f"  tri_orient={tri_orient.value}"
-            )
+            if cfg.VISION_VERBOSE:
+                print(
+                    f"[1x1 hp] L{7 - r_top}C{c_left}"
+                    f"  block_type={block_type.value}"
+                    f"  is_tri={is_tri_arg}"
+                    f"  tri_orient={tri_orient.value}"
+                )
             hp, hp_mask = _hp(
                 x, y, w, h, row=r_top, col=c_left,
                 is_tri=is_tri_arg,
@@ -1055,15 +1067,16 @@ def detect_blocks(frame: np.ndarray) -> List[Block]:
                 dim_ok = _qualifies_as_big_block(hsv, x, y, w, h)
                 if not dim_ok:
                     is_real_2x2 = False
-                print(
-                    f"[2x2 cand] L{7 - r_min_2}-L{7 - (r_min_2 + 1)} "
-                    f"C{c_min_2}-C{c_min_2 + 1}"
-                    f"  bbox={w}x{h}"
-                    f"  cell_fills={[round(f, 2) for f in cell_fills_dbg]}"
-                    f"  color_cov={ {k: round(v, 2) for k, v in color_coverage_dbg.items()} }"
-                    f"  color_ok={color_ok}  dim_ok={dim_ok}"
-                    f"  -> is_real_2x2={is_real_2x2}"
-                )
+                if cfg.VISION_VERBOSE:
+                    print(
+                        f"[2x2 cand] L{7 - r_min_2}-L{7 - (r_min_2 + 1)} "
+                        f"C{c_min_2}-C{c_min_2 + 1}"
+                        f"  bbox={w}x{h}"
+                        f"  cell_fills={[round(f, 2) for f in cell_fills_dbg]}"
+                        f"  color_cov={ {k: round(v, 2) for k, v in color_coverage_dbg.items()} }"
+                        f"  color_ok={color_ok}  dim_ok={dim_ok}"
+                        f"  -> is_real_2x2={is_real_2x2}"
+                    )
 
             if is_real_2x2:
                 peri = cv2.arcLength(cnt, True)
@@ -1071,13 +1084,14 @@ def detect_blocks(frame: np.ndarray) -> List[Block]:
                 bw_2x2 = bx2 - bx1
                 bh_2x2 = by2 - by1
                 hp, hp_mask = _hp(bx1, by1, bw_2x2, bh_2x2, row=r_min_2, col=c_min_2, is_2x2=True)
-                print(
-                    f"[GRID vs CONTOUR] 2x2-real"
-                    f" L{7 - r_min_2}-L{7 - (r_min_2 + 1)}"
-                    f" C{c_min_2}-C{c_min_2 + 1}"
-                    f" grid=({bx1},{by1},{bx2},{by2})"
-                    f" contour=({x},{y},{x + w},{y + h})"
-                )
+                if cfg.VISION_VERBOSE:
+                    print(
+                        f"[GRID vs CONTOUR] 2x2-real"
+                        f" L{7 - r_min_2}-L{7 - (r_min_2 + 1)}"
+                        f" C{c_min_2}-C{c_min_2 + 1}"
+                        f" grid=({bx1},{by1},{bx2},{by2})"
+                        f" contour=({x},{y},{x + w},{y + h})"
+                    )
                 blocks.append(Block(
                     x=x, y=y, w=w, h=h,
                     cx=x + w / 2.0, cy=y + h / 2.0,
@@ -1107,12 +1121,13 @@ def detect_blocks(frame: np.ndarray) -> List[Block]:
                         if cell_roi.size == 0 or np.count_nonzero(cell_roi) < cell_w * cell_h * 0.15:
                             continue
                         cell_hp, cell_hp_mask = _hp(cell_x, cell_y, cell_w, cell_h, row=ri, col=ci)
-                        print(
-                            f"[GRID vs CONTOUR] 2x2-split L{7 - ri}C{ci}"
-                            f" grid=({cell_x},{cell_y},"
-                            f"{cell_x + cell_w},{cell_y + cell_h})"
-                            f" contour=({x},{y},{x + w},{y + h})"
-                        )
+                        if cfg.VISION_VERBOSE:
+                            print(
+                                f"[GRID vs CONTOUR] 2x2-split L{7 - ri}C{ci}"
+                                f" grid=({cell_x},{cell_y},"
+                                f"{cell_x + cell_w},{cell_y + cell_h})"
+                                f" contour=({x},{y},{x + w},{y + h})"
+                            )
                         # Revertido do fix da ISSUE 1: cada cell usa a bbox da
                         # grade dela mesma, nao a do contorno externo (que cobre
                         # varias cells fundidas e faria a fisica ver 1 bloco gigante).
@@ -1183,12 +1198,13 @@ def detect_blocks(frame: np.ndarray) -> List[Block]:
                         cell_x, cell_y, cell_w, cell_h, row=ri, col=ci,
                         is_tri=(block_type_cell == BlockType.TRIANGLE),
                     )
-                    print(
-                        f"[GRID vs CONTOUR] fused L{7 - ri}C{ci}"
-                        f" grid=({cell_x},{cell_y},"
-                        f"{cell_x + cell_w},{cell_y + cell_h})"
-                        f" contour=({x},{y},{x + w},{y + h})"
-                    )
+                    if cfg.VISION_VERBOSE:
+                        print(
+                            f"[GRID vs CONTOUR] fused L{7 - ri}C{ci}"
+                            f" grid=({cell_x},{cell_y},"
+                            f"{cell_x + cell_w},{cell_y + cell_h})"
+                            f" contour=({x},{y},{x + w},{y + h})"
+                        )
                     # Revertido do fix da ISSUE 1: cada cell usa a bbox da grade
                     # dela mesma, nao a do contorno externo fundido.
                     blocks.append(Block(
@@ -1201,12 +1217,13 @@ def detect_blocks(frame: np.ndarray) -> List[Block]:
                         hp_mask=cell_hp_mask,
                     ))
                     fused_count += 1
-            print(
-                f"[fused] cols={cols_span} rows={rows_span}"
-                f"  bbox={w}x{h} src_area={int(area)}"
-                f"  L{7 - r_min}-L{7 - r_max}C{c_min}-C{c_max}"
-                f"  -> {fused_count} blocos"
-            )
+            if cfg.VISION_VERBOSE:
+                print(
+                    f"[fused] cols={cols_span} rows={rows_span}"
+                    f"  bbox={w}x{h} src_area={int(area)}"
+                    f"  L{7 - r_min}-L{7 - r_max}C{c_min}-C{c_max}"
+                    f"  -> {fused_count} blocos"
+                )
 
     return blocks
 

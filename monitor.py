@@ -227,7 +227,13 @@ def main():
     parser.add_argument(
         "--scale", type=float, default=0.5, help="Escala da janela (0.5 = metade)"
     )
+    parser.add_argument(
+        "--verbose-vision",
+        action="store_true",
+        help="Habilita prints de debug detalhados do modulo vision",
+    )
     args = parser.parse_args()
+    cfg.VISION_VERBOSE = args.verbose_vision
 
     global SCALE
     SCALE = args.scale

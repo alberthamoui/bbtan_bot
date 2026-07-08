@@ -56,6 +56,11 @@ def parse_args():
         help="Visualizacao animada do dry-run (Phase 1: angulos candidatos, "
              "Phase 2: bola percorrendo a melhor trajetoria). Nao executa disparos.",
     )
+    parser.add_argument(
+        "--verbose-vision",
+        action="store_true",
+        help="Habilita prints de debug detalhados do modulo vision",
+    )
     return parser.parse_args()
 
 
@@ -152,6 +157,7 @@ def run_turn(
 
 def main():
     args = parse_args()
+    cfg.VISION_VERBOSE = args.verbose_vision
 
     if args.animate:
         if args.delay > 0:

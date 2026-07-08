@@ -19,6 +19,7 @@ import time
 import threading
 import cv2
 
+import config as cfg
 from vision import scan_game, GameState
 from tools.visualizar_masks import run_masks_window, update_level_display
 
@@ -36,6 +37,11 @@ def parse_args():
         type=float,
         default=1.0,
         help="Intervalo entre cada scan em segundos (default: 1.0)",
+    )
+    parser.add_argument(
+        "--verbose-vision",
+        action="store_true",
+        help="Habilita prints de debug detalhados do modulo vision",
     )
     return parser.parse_args()
 
@@ -82,6 +88,7 @@ def print_state(state: GameState, scan_num: int):
 
 def main():
     args = parse_args()
+    cfg.VISION_VERBOSE = args.verbose_vision
 
     print("=" * 50)
     print("  BBTAN Bot — Vision Only")
