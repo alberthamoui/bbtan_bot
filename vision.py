@@ -31,9 +31,9 @@ class BlockType(Enum):
 
 class PowerUpType(Enum):
     EXTRA_BALL = "extra_ball"  # (+) ciano — bola extra
-    LASER_H = "laser_h"       # (<>) azul — laser horizontal (ataca linha)
-    LASER_V = "laser_v"       # (<>) azul — laser vertical (ataca coluna)
-    BONUS_B = "bonus_b"       # (B) amarelo ouro — multiplicador de bônus
+    LASER_H = "laser_h"  # (<>) azul — laser horizontal (ataca linha)
+    LASER_V = "laser_v"  # (<>) azul — laser vertical (ataca coluna)
+    BONUS_B = "bonus_b"  # (B) amarelo ouro — multiplicador de bônus
     UNKNOWN = "unknown"
 
 
@@ -61,8 +61,10 @@ class Block:
     hp: int = 1  # hit points estimado (via OCR básico)
     vertices: np.ndarray = field(default_factory=lambda: np.array([]))
     tri_orientation: TriangleOrientation = TriangleOrientation.UNKNOWN
-    row_index: int = -1   # 0 = mais baixa (perigosa), 6 = topo; -1 = desconhecido
-    col_index: int = -1   # 0 = coluna mais à esquerda, 6 = mais à direita; -1 = desconhecido
+    row_index: int = -1  # 0 = mais baixa (perigosa), 6 = topo; -1 = desconhecido
+    col_index: int = (
+        -1
+    )  # 0 = coluna mais à esquerda, 6 = mais à direita; -1 = desconhecido
     hp_mask: np.ndarray = field(
         default_factory=lambda: np.empty((0, 0), dtype=np.uint8), repr=False
     )  # text_mask gerada por _get_block_text_mask para debug DEBUG_MASK_HP
@@ -148,9 +150,9 @@ def _match_digit(crop: np.ndarray) -> Optional[str]:
         pad_cand = np.zeros((h_norm, target_w), dtype=np.uint8)
         pad_tmpl = np.zeros((h_norm, target_w), dtype=np.uint8)
         ox_c = (target_w - w_norm) // 2
-        pad_cand[:, ox_c:ox_c+w_norm] = binary
+        pad_cand[:, ox_c : ox_c + w_norm] = binary
         ox_t = (target_w - tw) // 2
-        pad_tmpl[:, ox_t:ox_t+tw] = tmpl
+        pad_tmpl[:, ox_t : ox_t + tw] = tmpl
         match = np.sum(pad_cand == pad_tmpl)
         total = pad_cand.size
         score = match / total
@@ -184,7 +186,7 @@ def read_ball_count_template() -> int:
         x, y, w, h, area = stats[i]
         if area < 15 or h < 6:
             continue
-        crop = mask[y:y+h, x:x+w]
+        crop = mask[y : y + h, x : x + w]
         components.append((x, crop))
 
     components.sort(key=lambda c: c[0])
@@ -314,9 +316,9 @@ def _match_hp_digit(crop: np.ndarray) -> Optional[str]:
         pad_cand = np.zeros((h_norm, target_w), dtype=np.uint8)
         pad_tmpl = np.zeros((h_norm, target_w), dtype=np.uint8)
         ox_c = (target_w - w_norm) // 2
-        pad_cand[:, ox_c:ox_c+w_norm] = binary
+        pad_cand[:, ox_c : ox_c + w_norm] = binary
         ox_t = (target_w - tw) // 2
-        pad_tmpl[:, ox_t:ox_t+tw] = tmpl
+        pad_tmpl[:, ox_t : ox_t + tw] = tmpl
         match = np.sum(pad_cand == pad_tmpl)
         score = match / pad_cand.size
         if score > best_score:
@@ -370,8 +372,9 @@ def _get_block_text_mask(roi_bgr: np.ndarray, is_triangle: bool = False) -> np.n
         else:
             # Quadrado: hull cobre toda a área colorida + os buracos do texto
             block_region = np.zeros_like(best_mask)
-            contours, _ = cv2.findContours(best_mask, cv2.RETR_EXTERNAL,
-                                           cv2.CHAIN_APPROX_SIMPLE)
+            contours, _ = cv2.findContours(
+                best_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+            )
             if contours:
                 largest = max(contours, key=cv2.contourArea)
                 hull = cv2.convexHull(largest)
@@ -400,9 +403,15 @@ def _get_block_text_mask(roi_bgr: np.ndarray, is_triangle: bool = False) -> np.n
     return text_mask
 
 
-def _read_hp(frame_bgr: np.ndarray, x: int, y: int, w: int, h: int,
-             is_triangle: bool = False,
-             is_2x2: bool = False) -> Tuple[int, np.ndarray]:
+def _read_hp(
+    frame_bgr: np.ndarray,
+    x: int,
+    y: int,
+    w: int,
+    h: int,
+    is_triangle: bool = False,
+    is_2x2: bool = False,
+) -> Tuple[int, np.ndarray]:
     """
     Lê HP do bloco via template matching contra templates/hp_digits/.
     Templates esperam fundo preto + dígito branco; _get_block_text_mask
@@ -462,7 +471,7 @@ def _read_hp(frame_bgr: np.ndarray, x: int, y: int, w: int, h: int,
         cx, cy, cw, ch, ca = stats[i]
         if ca < min_area or ch < 4:
             continue
-        crop = text_mask[cy:cy+ch, cx:cx+cw]
+        crop = text_mask[cy : cy + ch, cx : cx + cw]
         components.append((cx, crop))
 
     if not components:
@@ -479,6 +488,7 @@ def _read_hp(frame_bgr: np.ndarray, x: int, y: int, w: int, h: int,
     if not digits_str:
         return 1, text_mask
     return int(digits_str), text_mask
+
 
 def _get_row_index(cy: float) -> int:
     """
@@ -503,10 +513,13 @@ def _get_col_index(cx: float) -> int:
 
 
 def _qualifies_as_big_block(
-    hsv: np.ndarray,                              # frame HSV inteiro; usado pra cropar a bbox e rodar as color masks
-    x: int, y: int, w: int, h: int,               # bbox candidata em coords crop-relativas
-    tolerance: float = 0.15,                      # margem ± em cima do tamanho ideal 2*BLOCK_SIZE
-    dominance_threshold: float = 0.80,            # fracao minima da area MASCARADA que a cor top precisa cobrir
+    hsv: np.ndarray,  # frame HSV inteiro; usado pra cropar a bbox e rodar as color masks
+    x: int,
+    y: int,
+    w: int,
+    h: int,  # bbox candidata em coords crop-relativas
+    tolerance: float = 0.15,  # margem ± em cima do tamanho ideal 2*BLOCK_SIZE
+    dominance_threshold: float = 0.80,  # fracao minima da area MASCARADA que a cor top precisa cobrir
 ) -> bool:
     """
     Gate pra categoria "bloco 2x2 unico". As TRES checagens abaixo tem que passar:
@@ -527,39 +540,61 @@ def _qualifies_as_big_block(
     Rejeicoes sao printadas com valores medidos pra auditoria.
     """
     # --- Checagem 1: dimensao ---
-    expected = 2 * cfg.BLOCK_SIZE                          # tamanho ideal de 2x2 em pixels (=128 com BLOCK_SIZE=64)
-    dim_lo = int(expected * (1 - tolerance))               # limite inferior da faixa (~108 com tolerance=0.15)
-    dim_hi = int(expected * (1 + tolerance))               # limite superior (~147)
-    if not (dim_lo <= w <= dim_hi and dim_lo <= h <= dim_hi):  # w OU h fora da faixa -> nao eh 2x2
+    expected = (
+        2 * cfg.BLOCK_SIZE
+    )  # tamanho ideal de 2x2 em pixels (=128 com BLOCK_SIZE=64)
+    dim_lo = int(
+        expected * (1 - tolerance)
+    )  # limite inferior da faixa (~108 com tolerance=0.15)
+    dim_hi = int(expected * (1 + tolerance))  # limite superior (~147)
+    if not (
+        dim_lo <= w <= dim_hi and dim_lo <= h <= dim_hi
+    ):  # w OU h fora da faixa -> nao eh 2x2
         if cfg.VISION_VERBOSE:
             print(
                 f"[big-block reject dim] bbox=({x},{y}) {w}x{h}"
                 f"  faixa=[{dim_lo}..{dim_hi}]"
             )
-        return False                                       # dim errada -> ja retorna, nem chega na cor
+        return False  # dim errada -> ja retorna, nem chega na cor
 
     # --- Checagem 2: cor uniforme dominante ---
-    roi = hsv[y:y + h, x:x + w]                            # recorta a bbox no frame HSV
-    if roi.size == 0:                                      # bbox degenerada (fora do frame etc)
+    roi = hsv[y : y + h, x : x + w]  # recorta a bbox no frame HSV
+    if roi.size == 0:  # bbox degenerada (fora do frame etc)
         if cfg.VISION_VERBOSE:
             print(f"[big-block reject roi-empty] bbox=({x},{y}) {w}x{h}")
-        return False                                       # sem dados -> rejeita
+        return False  # sem dados -> rejeita
 
-    color_counts = []                                      # lista (nome, nnz) pra ranking depois
-    for name, low, high in cfg.BLOCK_COLOR_RANGES:         # mesma lista de cores usada em detect_blocks
-        mask = cv2.inRange(roi, low, high)                 # mascara binaria: pixels que caem nesta faixa HSV
-        color_counts.append((name, int(np.count_nonzero(mask))))  # guarda contagem por cor
+    color_counts = []  # lista (nome, nnz) pra ranking depois
+    for (
+        name,
+        low,
+        high,
+    ) in cfg.BLOCK_COLOR_RANGES:  # mesma lista de cores usada em detect_blocks
+        mask = cv2.inRange(
+            roi, low, high
+        )  # mascara binaria: pixels que caem nesta faixa HSV
+        color_counts.append(
+            (name, int(np.count_nonzero(mask)))
+        )  # guarda contagem por cor
 
-    total_masked = sum(nnz for _, nnz in color_counts)     # soma de pixels ativados em QUALQUER cor (denominador da dominancia)
-    if total_masked == 0:                                  # ROI nao ativou nenhuma cor conhecida (ex: fundo preto)
+    total_masked = sum(
+        nnz for _, nnz in color_counts
+    )  # soma de pixels ativados em QUALQUER cor (denominador da dominancia)
+    if total_masked == 0:  # ROI nao ativou nenhuma cor conhecida (ex: fundo preto)
         if cfg.VISION_VERBOSE:
             print(f"[big-block reject no-color] bbox=({x},{y}) {w}x{h}")
-        return False                                       # sem cor -> nao eh bloco
+        return False  # sem cor -> nao eh bloco
 
-    color_counts.sort(key=lambda t: -t[1])                 # ordena decrescente por nnz (top color primeiro)
-    dominant_name, dominant_nnz = color_counts[0]          # cor com mais pixels ativados
-    dominance = dominant_nnz / total_masked                # fracao do total mascarado que a cor top domina
-    if dominance < dominance_threshold:                    # abaixo de 80% -> ha outra cor competindo significativamente
+    color_counts.sort(
+        key=lambda t: -t[1]
+    )  # ordena decrescente por nnz (top color primeiro)
+    dominant_name, dominant_nnz = color_counts[0]  # cor com mais pixels ativados
+    dominance = (
+        dominant_nnz / total_masked
+    )  # fracao do total mascarado que a cor top domina
+    if (
+        dominance < dominance_threshold
+    ):  # abaixo de 80% -> ha outra cor competindo significativamente
         if cfg.VISION_VERBOSE:
             top3 = [(n, c) for n, c in color_counts[:3] if c > 0]
             print(
@@ -567,39 +602,59 @@ def _qualifies_as_big_block(
                 f"  dominante={dominant_name}={dominance:.0%}"
                 f"  top3={top3}"
             )
-        return False                                       # mistura de cores -> cluster de blocos, nao 2x2
+        return False  # mistura de cores -> cluster de blocos, nao 2x2
 
     # --- Checagem 3: contagem de numeros de HP ---
-    roi_bgr = cv2.cvtColor(roi, cv2.COLOR_HSV2BGR)         # _get_block_text_mask espera BGR; ROI eh pequeno, conversao barata
-    text_mask = _get_block_text_mask(roi_bgr, is_triangle=False)  # isola texto (dark pixels dentro do hull colorido)
-    n_labels, _, comp_stats, _ = cv2.connectedComponentsWithStats(text_mask, connectivity=8)  # componentes = digitos
+    roi_bgr = cv2.cvtColor(
+        roi, cv2.COLOR_HSV2BGR
+    )  # _get_block_text_mask espera BGR; ROI eh pequeno, conversao barata
+    text_mask = _get_block_text_mask(
+        roi_bgr, is_triangle=False
+    )  # isola texto (dark pixels dentro do hull colorido)
+    n_labels, _, comp_stats, _ = cv2.connectedComponentsWithStats(
+        text_mask, connectivity=8
+    )  # componentes = digitos
 
-    min_area = max(4, (w * h) // 400)                      # ruido/pontos sao <4 px; escala com o ROI
-    components = []                                        # (centroid_x, centroid_y) de cada digito valido
-    for i in range(1, n_labels):                           # label 0 = background, comeca em 1
+    min_area = max(4, (w * h) // 400)  # ruido/pontos sao <4 px; escala com o ROI
+    components = []  # (centroid_x, centroid_y) de cada digito valido
+    for i in range(1, n_labels):  # label 0 = background, comeca em 1
         cxi, cyi, cwi, chi, cai = comp_stats[i]
-        if cai < min_area or chi < 4:                      # descarta ruido pequeno e componentes finos demais
+        if (
+            cai < min_area or chi < 4
+        ):  # descarta ruido pequeno e componentes finos demais
             continue
         components.append((cxi + cwi / 2.0, cyi + chi / 2.0))
 
-    if len(components) <= 1:                               # 0 ou 1 componente -> definitivamente 1 HP so
-        return True                                        # (0 acontece quando HP nao foi detectado, tolera)
+    if len(components) <= 1:  # 0 ou 1 componente -> definitivamente 1 HP so
+        return True  # (0 acontece quando HP nao foi detectado, tolera)
 
-    dx_max = cfg.BLOCK_SIZE / 3.0                          # ~21 px: gap max entre digitos do MESMO HP
-    dy_max = cfg.BLOCK_SIZE / 4.0                          # ~16 px: linhas de digitos do MESMO HP ficam alinhadas
-    clusters: List[List[Tuple[float, float]]] = []          # cada cluster representa UM numero de HP
-    for cx_i, cy_i in components:                          # atribui cada componente ao cluster proximo, ou cria novo
+    dx_max = cfg.BLOCK_SIZE / 3.0  # ~21 px: gap max entre digitos do MESMO HP
+    dy_max = (
+        cfg.BLOCK_SIZE / 4.0
+    )  # ~16 px: linhas de digitos do MESMO HP ficam alinhadas
+    clusters: List[List[Tuple[float, float]]] = (
+        []
+    )  # cada cluster representa UM numero de HP
+    for (
+        cx_i,
+        cy_i,
+    ) in components:  # atribui cada componente ao cluster proximo, ou cria novo
         joined = False
         for cluster in clusters:
-            if any(abs(cx_i - ccx) < dx_max and abs(cy_i - ccy) < dy_max for ccx, ccy in cluster):
-                cluster.append((cx_i, cy_i))               # digito colado num membro do cluster -> mesmo HP
+            if any(
+                abs(cx_i - ccx) < dx_max and abs(cy_i - ccy) < dy_max
+                for ccx, ccy in cluster
+            ):
+                cluster.append(
+                    (cx_i, cy_i)
+                )  # digito colado num membro do cluster -> mesmo HP
                 joined = True
                 break
         if not joined:
-            clusters.append([(cx_i, cy_i)])                # muito longe -> novo HP
+            clusters.append([(cx_i, cy_i)])  # muito longe -> novo HP
 
-    if len(clusters) > 1:                                  # 2+ HPs = 2+ blocos, nao eh 2x2 unico
-        cluster_centers = []                               # centroide medio de cada cluster + qtd digitos, pra debug
+    if len(clusters) > 1:  # 2+ HPs = 2+ blocos, nao eh 2x2 unico
+        cluster_centers = []  # centroide medio de cada cluster + qtd digitos, pra debug
         for cluster in clusters:
             avg_x = sum(p[0] for p in cluster) / len(cluster)
             avg_y = sum(p[1] for p in cluster) / len(cluster)
@@ -610,9 +665,9 @@ def _qualifies_as_big_block(
                 f"  n_HPs={len(clusters)}"
                 f"  centros(x,y,digitos)={cluster_centers}"
             )
-        return False                                       # multiplos HPs -> multiplos blocos, rejeita
+        return False  # multiplos HPs -> multiplos blocos, rejeita
 
-    return True                                            # passou dim + cor + hp-count -> qualifica como 2x2 unico
+    return True  # passou dim + cor + hp-count -> qualifica como 2x2 unico
 
 
 def detect_blocks(frame: np.ndarray) -> List[Block]:
@@ -708,14 +763,19 @@ def detect_blocks(frame: np.ndarray) -> List[Block]:
                         block_type = BlockType.SQUARE
                         tri_orient = TriangleOrientation.UNKNOWN
                         vertices = np.array([[cell_x, cell_y]])
-                    survivors.append({
-                        "ri": ri, "ci": ci,
-                        "cell_x": cell_x, "cell_y": cell_y,
-                        "cell_w": cell_w, "cell_h": cell_h,
-                        "block_type": block_type,
-                        "tri_orient": tri_orient,
-                        "vertices": vertices,
-                    })
+                    survivors.append(
+                        {
+                            "ri": ri,
+                            "ci": ci,
+                            "cell_x": cell_x,
+                            "cell_y": cell_y,
+                            "cell_w": cell_w,
+                            "cell_h": cell_h,
+                            "block_type": block_type,
+                            "tri_orient": tri_orient,
+                            "vertices": vertices,
+                        }
+                    )
 
             if cfg.VISION_VERBOSE:
                 print(
@@ -731,8 +791,10 @@ def detect_blocks(frame: np.ndarray) -> List[Block]:
             for r_orig in range(len(cfg.LEVEL_TOPS) - 1):
                 for c_orig in range(cfg.GRID_COLUMNS - 1):
                     cells_2x2 = [
-                        (r_orig, c_orig), (r_orig, c_orig + 1),
-                        (r_orig + 1, c_orig), (r_orig + 1, c_orig + 1),
+                        (r_orig, c_orig),
+                        (r_orig, c_orig + 1),
+                        (r_orig + 1, c_orig),
+                        (r_orig + 1, c_orig + 1),
                     ]
                     if not all(c in survivor_set for c in cells_2x2):
                         continue
@@ -789,23 +851,36 @@ def detect_blocks(frame: np.ndarray) -> List[Block]:
                             )
                         continue
                     hp_2x2, hp_mask_2x2 = _hp(
-                        bx1, by1, bw_2x2, bh_2x2, row=r_orig, col=c_orig,
+                        bx1,
+                        by1,
+                        bw_2x2,
+                        bh_2x2,
+                        row=r_orig,
+                        col=c_orig,
                         is_2x2=True,
                     )
                     # Revertido do fix da ISSUE 1: 2x2 dentro de big-area usa a
                     # bbox 2x2 real (bx1..bx2, by1..by2), nao a do contorno gigante
                     # que pode cobrir 3+ celulas alem do grupo 2x2.
-                    blocks.append(Block(
-                        x=bx1, y=by1, w=bw_2x2, h=bh_2x2,
-                        cx=bx1 + bw_2x2 / 2.0, cy=by1 + bh_2x2 / 2.0,
-                        block_type=BlockType.SQUARE, hp=hp_2x2,
-                        vertices=np.array(
-                            [[bx1, by1], [bx2, by1], [bx2, by2], [bx1, by2]]
-                        ),
-                        tri_orientation=TriangleOrientation.UNKNOWN,
-                        row_index=r_orig, col_index=c_orig,
-                        hp_mask=hp_mask_2x2,
-                    ))
+                    blocks.append(
+                        Block(
+                            x=bx1,
+                            y=by1,
+                            w=bw_2x2,
+                            h=bh_2x2,
+                            cx=bx1 + bw_2x2 / 2.0,
+                            cy=by1 + bh_2x2 / 2.0,
+                            block_type=BlockType.SQUARE,
+                            hp=hp_2x2,
+                            vertices=np.array(
+                                [[bx1, by1], [bx2, by1], [bx2, by2], [bx1, by2]]
+                            ),
+                            tri_orientation=TriangleOrientation.UNKNOWN,
+                            row_index=r_orig,
+                            col_index=c_orig,
+                            hp_mask=hp_mask_2x2,
+                        )
+                    )
                     for c in cells_2x2:
                         consumed.add(c)
                     if cfg.VISION_VERBOSE:
@@ -837,23 +912,33 @@ def detect_blocks(frame: np.ndarray) -> List[Block]:
                         f" contour=({x},{y},{x + w},{y + h})"
                     )
                 cell_hp, cell_hp_mask = _hp(
-                    s["cell_x"], s["cell_y"], s["cell_w"], s["cell_h"],
-                    row=s["ri"], col=s["ci"],
+                    s["cell_x"],
+                    s["cell_y"],
+                    s["cell_w"],
+                    s["cell_h"],
+                    row=s["ri"],
+                    col=s["ci"],
                     is_tri=(s["block_type"] == BlockType.TRIANGLE),
                 )
                 # Revertido do fix da ISSUE 1: cada cell usa a bbox da grade
                 # dela mesma, nao a do contorno gigante que fundiu todas.
-                blocks.append(Block(
-                    x=s["cell_x"], y=s["cell_y"],
-                    w=s["cell_w"], h=s["cell_h"],
-                    cx=s["cell_x"] + s["cell_w"] / 2.0,
-                    cy=s["cell_y"] + s["cell_h"] / 2.0,
-                    block_type=s["block_type"], hp=cell_hp,
-                    vertices=s["vertices"],
-                    tri_orientation=s["tri_orient"],
-                    row_index=s["ri"], col_index=s["ci"],
-                    hp_mask=cell_hp_mask,
-                ))
+                blocks.append(
+                    Block(
+                        x=s["cell_x"],
+                        y=s["cell_y"],
+                        w=s["cell_w"],
+                        h=s["cell_h"],
+                        cx=s["cell_x"] + s["cell_w"] / 2.0,
+                        cy=s["cell_y"] + s["cell_h"] / 2.0,
+                        block_type=s["block_type"],
+                        hp=cell_hp,
+                        vertices=s["vertices"],
+                        tri_orientation=s["tri_orient"],
+                        row_index=s["ri"],
+                        col_index=s["ci"],
+                        hp_mask=cell_hp_mask,
+                    )
+                )
             continue
 
         c_left = _get_col_index(x + _MARGIN)
@@ -900,7 +985,7 @@ def detect_blocks(frame: np.ndarray) -> List[Block]:
         if cols_span == 1 and rows_span == 1:
             # Bloco 1×1 — classifica usando contorno da raw_mask (sem
             # morfologia que infla triângulos para parecerem quadrados)
-            raw_roi = raw_mask[y:y+h, x:x+w]
+            raw_roi = raw_mask[y : y + h, x : x + w]
             raw_cnts, _ = cv2.findContours(
                 raw_roi.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
             )
@@ -936,7 +1021,7 @@ def detect_blocks(frame: np.ndarray) -> List[Block]:
                     block_type = BlockType.SQUARE
                 vertices = approx.reshape(-1, 2)
 
-            is_tri_arg = (block_type == BlockType.TRIANGLE)
+            is_tri_arg = block_type == BlockType.TRIANGLE
             if cfg.VISION_VERBOSE:
                 print(
                     f"[1x1 hp] L{7 - r_top}C{c_left}"
@@ -945,18 +1030,31 @@ def detect_blocks(frame: np.ndarray) -> List[Block]:
                     f"  tri_orient={tri_orient.value}"
                 )
             hp, hp_mask = _hp(
-                x, y, w, h, row=r_top, col=c_left,
+                x,
+                y,
+                w,
+                h,
+                row=r_top,
+                col=c_left,
                 is_tri=is_tri_arg,
             )
-            blocks.append(Block(
-                x=x, y=y, w=w, h=h,
-                cx=x + w / 2.0, cy=y + h / 2.0,
-                block_type=block_type, hp=hp,
-                vertices=vertices,
-                tri_orientation=tri_orient,
-                row_index=r_top, col_index=c_left,
-                hp_mask=hp_mask,
-            ))
+            blocks.append(
+                Block(
+                    x=x,
+                    y=y,
+                    w=w,
+                    h=h,
+                    cx=x + w / 2.0,
+                    cy=y + h / 2.0,
+                    block_type=block_type,
+                    hp=hp,
+                    vertices=vertices,
+                    tri_orientation=tri_orient,
+                    row_index=r_top,
+                    col_index=c_left,
+                    hp_mask=hp_mask,
+                )
+            )
 
         elif cols_span == 2 and rows_span == 2:
             # Candidato a bloco grande 2×2 — validar que as 4 cells estão preenchidas
@@ -1028,7 +1126,9 @@ def detect_blocks(frame: np.ndarray) -> List[Block]:
                 approx = cv2.approxPolyDP(cnt, cfg.POLY_APPROX_FACTOR * peri, True)
                 bw_2x2 = bx2 - bx1
                 bh_2x2 = by2 - by1
-                hp, hp_mask = _hp(bx1, by1, bw_2x2, bh_2x2, row=r_min_2, col=c_min_2, is_2x2=True)
+                hp, hp_mask = _hp(
+                    bx1, by1, bw_2x2, bh_2x2, row=r_min_2, col=c_min_2, is_2x2=True
+                )
                 if cfg.VISION_VERBOSE:
                     print(
                         f"[GRID vs CONTOUR] 2x2-real"
@@ -1037,15 +1137,23 @@ def detect_blocks(frame: np.ndarray) -> List[Block]:
                         f" grid=({bx1},{by1},{bx2},{by2})"
                         f" contour=({x},{y},{x + w},{y + h})"
                     )
-                blocks.append(Block(
-                    x=x, y=y, w=w, h=h,
-                    cx=x + w / 2.0, cy=y + h / 2.0,
-                    block_type=BlockType.SQUARE, hp=hp,
-                    vertices=approx.reshape(-1, 2),
-                    tri_orientation=TriangleOrientation.UNKNOWN,
-                    row_index=r_min_2, col_index=c_min_2,
-                    hp_mask=hp_mask,
-                ))
+                blocks.append(
+                    Block(
+                        x=x,
+                        y=y,
+                        w=w,
+                        h=h,
+                        cx=x + w / 2.0,
+                        cy=y + h / 2.0,
+                        block_type=BlockType.SQUARE,
+                        hp=hp,
+                        vertices=approx.reshape(-1, 2),
+                        tri_orientation=TriangleOrientation.UNKNOWN,
+                        row_index=r_min_2,
+                        col_index=c_min_2,
+                        hp_mask=hp_mask,
+                    )
+                )
             else:
                 # Não é 2x2 real — split em blocos individuais
                 r_min = min(r_top, r_bot)
@@ -1063,9 +1171,14 @@ def detect_blocks(frame: np.ndarray) -> List[Block]:
                         cx1 = max(0, cell_x)
                         cx2 = min(mask.shape[1], cell_x + cell_w)
                         cell_roi = mask[cy1:cy2, cx1:cx2]
-                        if cell_roi.size == 0 or np.count_nonzero(cell_roi) < cell_w * cell_h * 0.15:
+                        if (
+                            cell_roi.size == 0
+                            or np.count_nonzero(cell_roi) < cell_w * cell_h * 0.15
+                        ):
                             continue
-                        cell_hp, cell_hp_mask = _hp(cell_x, cell_y, cell_w, cell_h, row=ri, col=ci)
+                        cell_hp, cell_hp_mask = _hp(
+                            cell_x, cell_y, cell_w, cell_h, row=ri, col=ci
+                        )
                         if cfg.VISION_VERBOSE:
                             print(
                                 f"[GRID vs CONTOUR] 2x2-split L{7 - ri}C{ci}"
@@ -1076,15 +1189,23 @@ def detect_blocks(frame: np.ndarray) -> List[Block]:
                         # Revertido do fix da ISSUE 1: cada cell usa a bbox da
                         # grade dela mesma, nao a do contorno externo (que cobre
                         # varias cells fundidas e faria a fisica ver 1 bloco gigante).
-                        blocks.append(Block(
-                            x=cell_x, y=cell_y, w=cell_w, h=cell_h,
-                            cx=cell_x + cell_w / 2.0, cy=cell_y + cell_h / 2.0,
-                            block_type=BlockType.SQUARE, hp=cell_hp,
-                            vertices=np.array([[cell_x, cell_y]]),
-                            tri_orientation=TriangleOrientation.UNKNOWN,
-                            row_index=ri, col_index=ci,
-                            hp_mask=cell_hp_mask,
-                        ))
+                        blocks.append(
+                            Block(
+                                x=cell_x,
+                                y=cell_y,
+                                w=cell_w,
+                                h=cell_h,
+                                cx=cell_x + cell_w / 2.0,
+                                cy=cell_y + cell_h / 2.0,
+                                block_type=BlockType.SQUARE,
+                                hp=cell_hp,
+                                vertices=np.array([[cell_x, cell_y]]),
+                                tri_orientation=TriangleOrientation.UNKNOWN,
+                                row_index=ri,
+                                col_index=ci,
+                                hp_mask=cell_hp_mask,
+                            )
+                        )
 
         else:
             # Contornos fundidos (2×1, 1×2, etc.) — separa em blocos individuais.
@@ -1107,7 +1228,10 @@ def detect_blocks(frame: np.ndarray) -> List[Block]:
                     cx1 = max(0, cell_x)
                     cx2 = min(mask.shape[1], cell_x + cell_w)
                     cell_roi = mask[cy1:cy2, cx1:cx2]
-                    if cell_roi.size == 0 or np.count_nonzero(cell_roi) < cell_w * cell_h * 0.15:
+                    if (
+                        cell_roi.size == 0
+                        or np.count_nonzero(cell_roi) < cell_w * cell_h * 0.15
+                    ):
                         continue
 
                     raw_roi = raw_mask[cy1:cy2, cx1:cx2]
@@ -1140,7 +1264,12 @@ def detect_blocks(frame: np.ndarray) -> List[Block]:
                         vertices_cell = np.array([[cell_x, cell_y]])
 
                     cell_hp, cell_hp_mask = _hp(
-                        cell_x, cell_y, cell_w, cell_h, row=ri, col=ci,
+                        cell_x,
+                        cell_y,
+                        cell_w,
+                        cell_h,
+                        row=ri,
+                        col=ci,
                         is_tri=(block_type_cell == BlockType.TRIANGLE),
                     )
                     if cfg.VISION_VERBOSE:
@@ -1152,15 +1281,23 @@ def detect_blocks(frame: np.ndarray) -> List[Block]:
                         )
                     # Revertido do fix da ISSUE 1: cada cell usa a bbox da grade
                     # dela mesma, nao a do contorno externo fundido.
-                    blocks.append(Block(
-                        x=cell_x, y=cell_y, w=cell_w, h=cell_h,
-                        cx=cell_x + cell_w / 2.0, cy=cell_y + cell_h / 2.0,
-                        block_type=block_type_cell, hp=cell_hp,
-                        vertices=vertices_cell,
-                        tri_orientation=tri_orient_cell,
-                        row_index=ri, col_index=ci,
-                        hp_mask=cell_hp_mask,
-                    ))
+                    blocks.append(
+                        Block(
+                            x=cell_x,
+                            y=cell_y,
+                            w=cell_w,
+                            h=cell_h,
+                            cx=cell_x + cell_w / 2.0,
+                            cy=cell_y + cell_h / 2.0,
+                            block_type=block_type_cell,
+                            hp=cell_hp,
+                            vertices=vertices_cell,
+                            tri_orientation=tri_orient_cell,
+                            row_index=ri,
+                            col_index=ci,
+                            hp_mask=cell_hp_mask,
+                        )
+                    )
                     fused_count += 1
             if cfg.VISION_VERBOSE:
                 print(
@@ -1179,13 +1316,19 @@ def detect_blocks(frame: np.ndarray) -> List[Block]:
 
 
 _POWERUP_HSV_RANGES = [
-    (PowerUpType.EXTRA_BALL, cfg.POWERUP_EXTRA_BALL_HSV_LOW, cfg.POWERUP_EXTRA_BALL_HSV_HIGH),
-    ("LASER",                cfg.POWERUP_LASER_HSV_LOW,      cfg.POWERUP_LASER_HSV_HIGH),
-    (PowerUpType.BONUS_B,    cfg.POWERUP_B_HSV_LOW,          cfg.POWERUP_B_HSV_HIGH),
+    (
+        PowerUpType.EXTRA_BALL,
+        cfg.POWERUP_EXTRA_BALL_HSV_LOW,
+        cfg.POWERUP_EXTRA_BALL_HSV_HIGH,
+    ),
+    ("LASER", cfg.POWERUP_LASER_HSV_LOW, cfg.POWERUP_LASER_HSV_HIGH),
+    (PowerUpType.BONUS_B, cfg.POWERUP_B_HSV_LOW, cfg.POWERUP_B_HSV_HIGH),
 ]
 
 
-def _detect_laser_orientation(frame_gray: np.ndarray, cx: float, cy: float, radius: float) -> PowerUpType:
+def _detect_laser_orientation(
+    frame_gray: np.ndarray, cx: float, cy: float, radius: float
+) -> PowerUpType:
     """
     Determina se o laser é horizontal ou vertical analisando o padrão
     interno do ícone (setas <> vs setas verticais).
@@ -1235,7 +1378,9 @@ def detect_powerups(frame: np.ndarray) -> List[PowerUp]:
                     final_type = _detect_laser_orientation(gray, cx, cy, radius)
                 else:
                     final_type = ptype
-                powerups.append(PowerUp(cx=cx, cy=cy, radius=radius, power_up_type=final_type))
+                powerups.append(
+                    PowerUp(cx=cx, cy=cy, radius=radius, power_up_type=final_type)
+                )
 
     return powerups
 
@@ -1285,7 +1430,6 @@ def detect_ball(frame: np.ndarray) -> Optional[Tuple[float, float]]:
                 best = (cx, cy)
 
     return best
-
 
 
 def count_balls(frame: np.ndarray) -> int:
@@ -1348,7 +1492,7 @@ def detect_round_end() -> bool:
     Verifica se pelo menos 2 das 4 regiões indicadoras contêm a cor rosa.
     """
     hits = 0
-    for (rx, ry, rw, rh) in cfg.ROUND_END_REGIONS:
+    for rx, ry, rw, rh in cfg.ROUND_END_REGIONS:
         mon = {"top": ry, "left": rx, "width": rw, "height": rh}
         img = np.array(_sct.grab(mon), dtype=np.uint8)[:, :, :3]
         hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
@@ -1397,7 +1541,7 @@ def scan_game() -> GameState:
             powerups=[],
             ball_x=None,
             ball_y=None,
-            detected_ball_count=0, 
+            detected_ball_count=0,
             game_over=True,
             white_ratio=white_ratio,
             raw_frame=frame,
@@ -1419,13 +1563,13 @@ def scan_game() -> GameState:
     for b in blocks:
         is_large = b.w > cfg.BLOCK_SIZE * 1.5
         if b.block_type == BlockType.TRIANGLE:
-            color = (0, 0, 255)     # vermelho
+            color = (0, 0, 255)  # vermelho
             tipo = "TRI"
         elif is_large:
-            color = (0, 255, 0)     # verde
+            color = (0, 255, 0)  # verde
             tipo = "GRANDE"
         else:
-            color = (255, 0, 0)     # azul
+            color = (255, 0, 0)  # azul
             tipo = "BLK"
 
         if b.block_type == BlockType.TRIANGLE and len(b.vertices) >= 3:
@@ -1441,14 +1585,28 @@ def scan_game() -> GameState:
         tamanho_texto = 0.45
 
         (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, tamanho_texto, 2)
-        
+
         # Escreve valor dentro dos objetos
-        eixoX = (cx_label - tw // 2)
+        eixoX = cx_label - tw // 2
         eixoY = (cy_label + th // 2) + 20
-        cv2.putText(debug, label, (eixoX, eixoY), # Preto (contorno)
-                    cv2.FONT_HERSHEY_SIMPLEX, tamanho_texto, (0, 0, 0), 2)
-        cv2.putText(debug, label, (eixoX, eixoY), # cor especifica
-                    cv2.FONT_HERSHEY_SIMPLEX, tamanho_texto, (255, 255, 255), 1)
+        cv2.putText(
+            debug,
+            label,
+            (eixoX, eixoY),  # Preto (contorno)
+            cv2.FONT_HERSHEY_SIMPLEX,
+            tamanho_texto,
+            (0, 0, 0),
+            2,
+        )
+        cv2.putText(
+            debug,
+            label,
+            (eixoX, eixoY),  # cor especifica
+            cv2.FONT_HERSHEY_SIMPLEX,
+            tamanho_texto,
+            (255, 255, 255),
+            1,
+        )
 
     # _POWERUP_DEBUG_LABEL = {
     #     PowerUpType.EXTRA_BALL: "+",

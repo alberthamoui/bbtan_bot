@@ -136,7 +136,6 @@ def _collide_aabb(
         return Vec2(dx * inv_dist, dy * inv_dist)
 
 
-
 # ─────────────────────────────────────────────
 # COLISÃO COM TRIÂNGULO
 # ─────────────────────────────────────────────
@@ -161,7 +160,9 @@ def _get_triangle_diagonal_normal(orientation: TriangleOrientation) -> Vec2:
     return normals.get(orientation, Vec2(0, -1))
 
 
-def _dist_to_segment_sq(px: float, py: float, ax: float, ay: float, bx: float, by: float) -> float:
+def _dist_to_segment_sq(
+    px: float, py: float, ax: float, ay: float, bx: float, by: float
+) -> float:
     dx, dy = bx - ax, by - ay
     len_sq = dx * dx + dy * dy
     if len_sq < 1e-8:
@@ -307,7 +308,9 @@ def _sim_one_ball(
     powerups: List[PowerUp],
     collected_pus: set,
     record_path: bool = False,
-) -> Tuple[List[Tuple[int, int]], set, List[Tuple[float, float]], List[Tuple[float, float]]]:
+) -> Tuple[
+    List[Tuple[int, int]], set, List[Tuple[float, float]], List[Tuple[float, float]]
+]:
     """
     Simula UMA bola (1 dano por colisão). Não altera block_hp externo.
     Retorna (hit_sequence, new_pu_indices, path, collisions).
@@ -428,8 +431,13 @@ def simulate_trajectory(
         active = [b for b in blocks if block_hp.get(id(b), 0) > 0]
 
         hit_seq, new_pus, path, collisions = _sim_one_ball(
-            start_x, start_y, angle_deg, active, block_hp,
-            powerups, collected_pus,
+            start_x,
+            start_y,
+            angle_deg,
+            active,
+            block_hp,
+            powerups,
+            collected_pus,
             record_path=record_path,
         )
 
@@ -563,21 +571,33 @@ def find_best_angle(
     all_results = []
     for a in range(angle_min, angle_max + 1):
         r = simulate_trajectory(
-            ball_x, ball_y, float(a), blocks, powerups,
-            ball_count=ball_count, record_path=False,
+            ball_x,
+            ball_y,
+            float(a),
+            blocks,
+            powerups,
+            ball_count=ball_count,
+            record_path=False,
         )
         all_results.append(r)
 
     has_danger = any(b.row_index <= 1 for b in blocks)
     if has_danger:
-        all_results.sort(key=lambda r: (r.danger_hits, r.weighted_hits, r.total_hits), reverse=True)
+        all_results.sort(
+            key=lambda r: (r.danger_hits, r.weighted_hits, r.total_hits), reverse=True
+        )
     else:
         all_results.sort(key=lambda r: (r.weighted_hits, r.total_hits), reverse=True)
     best = all_results[0]
 
     best_with_path = simulate_trajectory(
-        ball_x, ball_y, best.angle, blocks, powerups,
-        ball_count=ball_count, record_path=True,
+        ball_x,
+        ball_y,
+        best.angle,
+        blocks,
+        powerups,
+        ball_count=ball_count,
+        record_path=True,
     )
 
     return best_with_path, all_results

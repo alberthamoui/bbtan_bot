@@ -53,7 +53,7 @@ def parse_args():
         "--animate",
         action="store_true",
         help="Visualizacao animada do dry-run (Phase 1: angulos candidatos, "
-             "Phase 2: bola percorrendo a melhor trajetoria). Nao executa disparos.",
+        "Phase 2: bola percorrendo a melhor trajetoria). Nao executa disparos.",
     )
     parser.add_argument(
         "--verbose-vision",
@@ -163,6 +163,7 @@ def main():
             print(f"Iniciando em {args.delay:.0f}s — posicione o jogo!")
             time.sleep(args.delay)
         from tools.animate_dryrun import run_animate
+
         try:
             run_animate()
         finally:
@@ -180,7 +181,9 @@ def main():
     print()
 
     masks_stop = threading.Event()
-    masks_thread = threading.Thread(target=run_masks_window, args=(masks_stop,), daemon=True)
+    masks_thread = threading.Thread(
+        target=run_masks_window, args=(masks_stop,), daemon=True
+    )
     masks_thread.start()
 
     if args.dry_run:
@@ -188,7 +191,9 @@ def main():
         try:
             while True:
                 state = scan_game()
-                update_level_display(state.debug_frame, state.blocks, state.detected_ball_count)
+                update_level_display(
+                    state.debug_frame, state.blocks, state.detected_ball_count
+                )
                 time.sleep(1.0)
         except KeyboardInterrupt:
             print("\nParado pelo usuario.")
@@ -221,7 +226,9 @@ def main():
             # Captura e atualiza "Blocos por Level"
             time.sleep(3)
             state = scan_game()
-            update_level_display(state.debug_frame, state.blocks, state.detected_ball_count)
+            update_level_display(
+                state.debug_frame, state.blocks, state.detected_ball_count
+            )
             print("  [scan] Estado capturado — display atualizado")
 
             status = run_turn(
@@ -238,11 +245,15 @@ def main():
                 print(f"{'='*50}")
 
                 from datetime import datetime
+
                 with open("historico.txt", "a", encoding="utf-8") as f:
-                    f.write(f"{datetime.now():%Y-%m-%d %H:%M:%S} | Turnos: {turnos_sobrevividos} | Bolas: {state.detected_ball_count}\n")
+                    f.write(
+                        f"{datetime.now():%Y-%m-%d %H:%M:%S} | Turnos: {turnos_sobrevividos} | Bolas: {state.detected_ball_count}\n"
+                    )
 
                 if not args.dry_run:
                     import pyautogui
+
                     for i in range(3):
                         print(f"  >> Clique restart {i+1}/3...")
                         pyautogui.click(1576, 781)
@@ -269,9 +280,12 @@ def main():
                     last_block_fingerprint = status
 
                 if stale_turns >= max_stale_turns:
-                    print(f"\n  [!] Blocos na mesma posicao por {max_stale_turns} turnos — clicando para destravar bolas")
+                    print(
+                        f"\n  [!] Blocos na mesma posicao por {max_stale_turns} turnos — clicando para destravar bolas"
+                    )
                     if not args.dry_run:
                         import pyautogui
+
                         pyautogui.click(1580, 961)
                     stale_turns = 0
 
