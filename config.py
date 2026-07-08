@@ -117,21 +117,14 @@ ROUND_END_REGIONS = [
 ROUND_END_HSV_LOW  = np.array([163, 150, 180])
 ROUND_END_HSV_HIGH = np.array([177, 255, 255])
 
-# Fundo escuro — tudo abaixo desse valor é ignorado
-BG_VALUE_THRESHOLD = 80
-
 # ─────────────────────────────────────────────
 # DETECÇÃO DE BLOCOS
 # ─────────────────────────────────────────────
 
 MIN_BLOCK_AREA = int(BLOCK_SIZE * BLOCK_SIZE * 0.15)  # ~15% da área de 1 bloco (triangulo ~50%)
 MAX_BLOCK_AREA = int(BLOCK_SIZE * BLOCK_SIZE * 4.5)  # bloco grande 2x2 (4x) + margem morfológica
-TRIANGLE_VERTICES = 3
-SQUARE_VERTICES = 4
 POLY_APPROX_FACTOR = 0.04  # fator do approxPolyDP
 
-# Tamanho esperado de um bloco na grid (pixels)
-EXPECTED_BLOCK_SIZE = BLOCK_SIZE
 
 # ─────────────────────────────────────────────
 # SIMULAÇÃO DE FÍSICA
@@ -157,7 +150,6 @@ SIM_STEP_SIZE = 2.0  # resolução do step (menor = mais preciso, mais lento)
 SCORE_HIT_BLOCK = 1  # cada hit em bloco
 SCORE_DESTROY_BLOCK = 50  # bloco destruído (hp <= 0)
 SCORE_HIT_POWERUP = 200  # coletar power-up (+)
-SCORE_MULTI_BOUNCE = 5  # bônus por ricochete entre blocos consecutivos
 SCORE_LOOP_BONUS = 100  # bônus se detectar "loop" entre blocos próximos
 SCORE_ROW0_SURVIVE_PENALTY = 100  # penalidade por HP restante em blocos da row 0 após simulação
 
@@ -197,8 +189,6 @@ ANGLE_STEP = 1  # resolução da busca (1° = 160 simulações)
 DRAG_DISTANCE = 150  # distância do arrasto em pixels
 DRAG_DURATION = 0.15  # segundos do gesto de arrasto
 TURN_WAIT_TIME = 3.5   # segundos aguardando as bolas pararem após o disparo
-PRESCAN_DELAY = 6.0    # segundos extras após OCR antes do próximo scan (blocos descendo)
-CONFIDENCE = 0.8  # confiança mínima para template matching (se usar)
 
 # Botão de acelerar (coordenadas absolutas na tela)
 SPEED_UP_X = 1789

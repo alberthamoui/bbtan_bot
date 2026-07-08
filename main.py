@@ -16,14 +16,13 @@ Uso:
 
 import argparse
 import time
-import sys
 import threading
 import cv2
 
 import config as cfg
 from vision import scan_game, detect_round_end, GameState
-from physics import find_best_angle, SimResult
-from executor import execute_shot, wait_for_turn_end, wait_for_turn_end_smart
+from physics import find_best_angle
+from executor import execute_shot
 from tools.debug_view import draw_trajectory, draw_stats_overlay
 from tools.visualizar_masks import run_masks_window, update_level_display
 
@@ -145,7 +144,7 @@ def run_turn(
     # ── 4. EXECUÇÃO ──
     if not dry_run:
         execute_shot(ball_x, ball_y, best.angle)
-        print(f"  >> Disparo executado!")
+        print("  >> Disparo executado!")
     else:
         print(f"  >> [DRY RUN] Tiro em {best.angle:.1f}° (nao executado)")
 

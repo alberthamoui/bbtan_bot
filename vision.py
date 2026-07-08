@@ -208,50 +208,6 @@ def read_ball_count_template() -> int:
     return int(digits_str)
 
 
-def _read_round_number() -> Tuple[Optional[int], Optional[np.ndarray]]:
-    """
-    Lê o número da rodada via template matching na região fixa da tela.
-    Retorna (round_number, mask_debug).
-    """
-    _load_digit_templates()
-    if not _DIGIT_TEMPLATES:
-        return None, None
-
-    rx, ry, rw, rh = 1527, 191, 101, 50
-    mon = {"top": ry, "left": rx, "width": rw, "height": rh}
-    img = np.array(_sct.grab(mon), dtype=np.uint8)[:, :, :3]
-    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-    round_mask = cv2.inRange(hsv, np.array([0, 0, 220]), np.array([179, 30, 255]))
-
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
-    round_mask = cv2.morphologyEx(round_mask, cv2.MORPH_CLOSE, kernel)
-
-    n_labels, _, stats, _ = cv2.connectedComponentsWithStats(round_mask, connectivity=8)
-
-    components = []
-    for i in range(1, n_labels):
-        sx, sy, sw, sh, sa = stats[i]
-        if sa < 15 or sh < 6:
-            continue
-        crop = round_mask[sy:sy+sh, sx:sx+sw]
-        components.append((sx, crop))
-
-    if not components:
-        return None, round_mask
-
-    components.sort(key=lambda c: c[0])
-
-    digits_str = ""
-    for _, crop in components:
-        d = _match_digit(crop)
-        if d is not None:
-            digits_str += d
-
-    if not digits_str:
-        return None, round_mask
-    return int(digits_str), round_mask
-
-
 def capture_screen() -> np.ndarray:
     """Captura a região do jogo e retorna como array BGR (OpenCV)."""
     rx, ry, rw, rh = cfg.GAME_REGION
@@ -544,17 +500,6 @@ def _get_col_index(cx: float) -> int:
         if cfg.COL_LEFTS[i] <= cx <= cfg.COL_RIGHTS[i]:
             return i
     return -1
-
-
-def _is_green_block(hsv_roi: np.ndarray) -> bool:
-    """Verifica se o bloco é verde usando a faixa 'verde' de BLOCK_COLOR_RANGES."""
-    if hsv_roi.size == 0:
-        return False
-    for name, low, high in cfg.BLOCK_COLOR_RANGES:
-        if name == "verde":
-            green_mask = cv2.inRange(hsv_roi, low, high)
-            return np.count_nonzero(green_mask) > hsv_roi.shape[0] * hsv_roi.shape[1] * 0.30
-    return False
 
 
 def _qualifies_as_big_block(

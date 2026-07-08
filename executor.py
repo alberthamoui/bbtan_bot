@@ -53,17 +53,6 @@ def angle_to_screen_coords(
     return (abs_ball_x, abs_ball_y, target_x, target_y)
 
 
-def execute_shot_tap(ball_x: float, ball_y: float, angle_deg: float):
-    """
-    Método 1: Tap no ponto alvo.
-    Alguns versões do BBTAN aceitam um tap simples na direção desejada.
-    """
-    sx, sy, tx, ty = angle_to_screen_coords(ball_x, ball_y, angle_deg)
-
-    # Clica no ponto alvo (direção do disparo)
-    pyautogui.click(int(tx), int(ty))
-
-
 def execute_shot_swipe(ball_x: float, ball_y: float, angle_deg: float):
     """
     Método 2: Swipe/drag da bola até o ponto alvo.
@@ -82,25 +71,6 @@ def execute_shot_swipe(ball_x: float, ball_y: float, angle_deg: float):
         duration=cfg.DRAG_DURATION,
         button="left",
     )
-
-
-def execute_shot_hold_release(ball_x: float, ball_y: float, angle_deg: float):
-    """
-    Método 3: Press-hold-move-release (simula toque contínuo).
-    Mais compatível com emuladores Android que precisam de gesto longo.
-    """
-    sx, sy, tx, ty = angle_to_screen_coords(ball_x, ball_y, angle_deg)
-
-    # Press na bola
-    pyautogui.mouseDown(int(sx), int(sy), button="left")
-    time.sleep(0.1)
-
-    # Move suavemente até o alvo (define a direção)
-    pyautogui.moveTo(int(tx), int(ty), duration=0.2)
-    time.sleep(0.05)
-
-    # Release para disparar
-    pyautogui.mouseUp(button="left")
 
 
 def speed_up_click():
