@@ -1068,7 +1068,9 @@ def detect_blocks(frame: np.ndarray) -> List[Block]:
             if is_real_2x2:
                 peri = cv2.arcLength(cnt, True)
                 approx = cv2.approxPolyDP(cnt, cfg.POLY_APPROX_FACTOR * peri, True)
-                hp, hp_mask = _hp(x, y, w, h, row=r_min_2, col=c_min_2)
+                bw_2x2 = bx2 - bx1
+                bh_2x2 = by2 - by1
+                hp, hp_mask = _hp(bx1, by1, bw_2x2, bh_2x2, row=r_min_2, col=c_min_2, is_2x2=True)
                 print(
                     f"[GRID vs CONTOUR] 2x2-real"
                     f" L{7 - r_min_2}-L{7 - (r_min_2 + 1)}"
@@ -1464,7 +1466,11 @@ def scan_game() -> GameState:
             color = (255, 0, 0)     # azul
             tipo = "BLK"
 
-        cv2.rectangle(debug, (b.x, b.y), (b.x + b.w, b.y + b.h), color, 2)
+        if b.block_type == BlockType.TRIANGLE and len(b.vertices) >= 3:
+            pts = b.vertices.reshape((-1, 1, 2)).astype(np.int32)
+            cv2.polylines(debug, [pts], True, color, 2)
+        else:
+            cv2.rectangle(debug, (b.x, b.y), (b.x + b.w, b.y + b.h), color, 2)
         # label = f"{tipo} hp={b.hp} L{7 - b.row_index}C{b.col_index}"
         label = f"{b.hp} L{7 - b.row_index}C{b.col_index}"
         cx_label = b.x + b.w // 2
@@ -1502,7 +1508,7 @@ def scan_game() -> GameState:
         # )
 
     if ball_pos:
-        cv2.circle(debug, (int(ball_x), int(ball_y)), 8, (0, 0, 255), 2)
+        cv2.circle(debug, (int(ball_x), int(ball_y)), cfg.BALL_RADIUS, (0, 0, 255), 2)
 
     return GameState(
         blocks=blocks,
@@ -1526,15 +1532,3 @@ def show_debug(state: GameState, wait: int = 0):
     """Mostra o frame de debug com anotações. Pressione qualquer tecla para fechar."""
     cv2.imshow("BBTAN Bot - Debug", state.debug_frame)
     cv2.waitKey(wait)
-
-if __name__ == "__main__":
-    # Teste rápido de detecção
-    print("Capturando tela...")
-    state = scan_game()
-    print(f"Blocos: {len(state.blocks)}")
-    for b in state.blocks:
-        print(f"  {b.block_type.value} @ ({b.x},{b.y}) {b.w}x{b.h} hp={b.hp}")
-    print(f"Power-ups: {len(state.powerups)}")
-    print(f"Bola: ({state.ball_x}, {state.ball_y})")
-    show_debug(state, wait=0)
-    cv2.destroyAllWindows()
