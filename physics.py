@@ -20,11 +20,59 @@ from vision import Block, BlockType, PowerUp, PowerUpType, TriangleOrientation
 
 
 @dataclass
+class ScoreTerms:
+    """
+    Componentes CRUS de uma simulação, sem pesos aplicados.
+
+    Existe para separar "o que aconteceu no turno" de "quanto isso vale": a
+    contabilidade acumula aqui e compute_score() aplica os pesos do config uma
+    única vez. Antes havia dois acumuladores paralelos (score e weighted_hits)
+    calculando quase a mesma coisa com pesos diferentes, e só o segundo decidia.
+    """
+
+    weighted_hits: float = 0.0  # Σ ROW_MULTIPLIER × dano efetivo
+    weighted_destroys: float = 0.0  # Σ ROW_MULTIPLIER por bloco destruído
+    extra_balls: int = 0
+    bonus_b: int = 0
+    total_hits: int = 0
+    danger_hits: int = 0  # hits em rows 0-1 — diagnóstico, fora do ranking
+    row0_surviving_hp: int = 0  # HP vivo na fileira crítica ao fim do turno
+
+    def add(self, other: "ScoreTerms") -> None:
+        """Acumula os termos de outra simulação parcial (ex: efeito do laser)."""
+        self.weighted_hits += other.weighted_hits
+        self.weighted_destroys += other.weighted_destroys
+        self.extra_balls += other.extra_balls
+        self.bonus_b += other.bonus_b
+        self.total_hits += other.total_hits
+        self.danger_hits += other.danger_hits
+        self.row0_surviving_hp += other.row0_surviving_hp
+
+
+def compute_score(t: ScoreTerms) -> float:
+    """
+    Nota final de um ângulo — o ÚNICO critério de ordenação de find_best_angle.
+
+    Cada peso tem um trabalho só. W_ROW0_SURVIVE é o único termo que olha o
+    estado final do tabuleiro (HP vivo na fileira que causa game over); os
+    outros contam o que a bola fez no caminho.
+    """
+    return (
+        cfg.W_HIT * t.weighted_hits
+        + cfg.W_DESTROY * t.weighted_destroys
+        + cfg.W_EXTRA_BALL * t.extra_balls
+        + cfg.W_BONUS_B * t.bonus_b
+        + cfg.W_LOOP * (t.total_hits // 10)
+        - cfg.W_ROW0_SURVIVE * t.row0_surviving_hp
+    )
+
+
+@dataclass
 class SimResult:
     """Resultado de uma simulação de trajetória."""
 
     angle: float
-    score: float  # display apenas
+    score: float  # critério de ranking (compute_score dos ScoreTerms)
     total_hits: int
     weighted_hits: float  # hits ponderados por ROW_MULTIPLIERS
     danger_hits: int  # hits efetivos em blocos das rows 0-1 (ranking primário)
@@ -247,22 +295,18 @@ def _apply_laser(
     blocks: List[Block],
     block_hp: dict,
     ball_count: int,
-) -> Tuple[float, int, float, int, int]:
+) -> Tuple[ScoreTerms, int]:
     """
     Efeito do laser: LASER_H ataca blocos na mesma linha (Y),
     LASER_V ataca blocos na mesma coluna (X).
-    Retorna (score_ganho, blocos_destruidos, weighted_ganho, danger_hits, hits).
+    Retorna (termos, blocos_destruidos).
 
-    weighted/danger/hits usam a mesma contabilidade dos hits de bola
-    (dano efetivo limitado ao HP restante, ROW_MULTIPLIERS por fileira,
-    DESTROY_WEIGHT ao destruir) para que o laser conte no ranking de
-    find_best_angle — antes ele so somava em score (display).
+    Usa a mesma contabilidade dos hits de bola (dano efetivo limitado ao HP
+    restante, ROW_MULTIPLIERS por fileira) para que o laser conte no ranking
+    de find_best_angle.
     """
-    score = 0.0
+    terms = ScoreTerms()
     destroyed = 0
-    weighted = 0.0
-    danger = 0
-    hits = 0
     half_cell = cfg.BLOCK_SIZE / 2
 
     for block in blocks:
@@ -280,18 +324,16 @@ def _apply_laser(
         effective = min(ball_count, hp)
         block_hp[id(block)] -= ball_count
         row_mult = cfg.ROW_MULTIPLIERS.get(block.row_index, 1.0)
-        score += cfg.SCORE_HIT_BLOCK * ball_count * row_mult
-        hits += effective
-        weighted += row_mult * effective
+        terms.total_hits += effective
+        terms.weighted_hits += row_mult * effective
         if block.row_index <= 1:
-            danger += effective
+            terms.danger_hits += effective
 
         if block_hp[id(block)] <= 0:
             destroyed += 1
-            score += cfg.SCORE_DESTROY_BLOCK * row_mult
-            weighted += row_mult * cfg.DESTROY_WEIGHT
+            terms.weighted_destroys += row_mult
 
-    return score, destroyed, weighted, danger, hits
+    return terms, destroyed
 
 
 # ─────────────────────────────────────────────
@@ -332,7 +374,11 @@ def _sim_one_ball(
     collisions: List[Tuple[float, float]] = []
     went_up = False
 
+    # MAX_SIM_STEPS é derivado de SIM_PATH_BUDGET / SIM_STEP_SIZE, então o teto do
+    # loop é sempre o mesmo alcance em pixels, independente da resolução escolhida.
     for step in range(cfg.MAX_SIM_STEPS):
+        # BALL_SPEED se cancela: vel já foi normalizado e multiplicado por ele acima,
+        # então o avanço real é sempre `direção × SIM_STEP_SIZE`.
         pos = pos + vel * (cfg.SIM_STEP_SIZE / cfg.BALL_SPEED)
 
         if record_path and step % 4 == 0:
@@ -413,13 +459,9 @@ def simulate_trajectory(
     block_map = {id(b): b for b in blocks}
     collected_pus: set = set()
 
-    total_score = 0.0
-    total_hits = 0
-    total_weighted = 0.0
-    total_danger = 0
+    terms = ScoreTerms()
     total_destroyed = 0
     total_pu = 0
-    total_extra = 0
     first_path: List[Tuple[float, float]] = []
     first_collisions: List[Tuple[float, float]] = []
     ball_paths: List[List[Tuple[float, float]]] = []
@@ -452,21 +494,14 @@ def simulate_trajectory(
             total_pu += 1
             pu = powerups[pi]
             if pu.power_up_type in (PowerUpType.LASER_H, PowerUpType.LASER_V):
-                ls, ld, lw, ldg, lh = _apply_laser(pu, blocks, block_hp, 1)
-                total_score += ls
-                total_destroyed += ld
-                total_weighted += lw
-                total_danger += ldg
-                total_hits += lh
+                laser_terms, laser_destroyed = _apply_laser(pu, blocks, block_hp, 1)
+                terms.add(laser_terms)
+                total_destroyed += laser_destroyed
                 laser_fired = True
             elif pu.power_up_type == PowerUpType.EXTRA_BALL:
-                total_extra += 1
-                total_score += cfg.SCORE_HIT_POWERUP
-                total_weighted += cfg.EXTRA_BALL_WEIGHT
-            else:
-                total_score += cfg.SCORE_HIT_POWERUP
-                if pu.power_up_type == PowerUpType.BONUS_B:
-                    total_weighted += cfg.BONUS_B_WEIGHT
+                terms.extra_balls += 1
+            elif pu.power_up_type == PowerUpType.BONUS_B:
+                terms.bonus_b += 1
 
         if not hit_seq:
             # Nada mais pra acertar — as bolas restantes seguem esta mesma
@@ -511,38 +546,33 @@ def simulate_trajectory(
             block_hp[bid] -= damage
 
             rm = cfg.ROW_MULTIPLIERS.get(row_of[bid], 1.0)
-            total_hits += effective
-            total_weighted += rm * effective
-            total_score += cfg.SCORE_HIT_BLOCK * effective * rm
+            terms.total_hits += effective
+            terms.weighted_hits += rm * effective
             if row_of[bid] <= 1:
-                total_danger += effective
+                terms.danger_hits += effective
 
             if block_hp[bid] <= 0:
                 total_destroyed += 1
-                total_score += cfg.SCORE_DESTROY_BLOCK * rm
-                total_weighted += rm * cfg.DESTROY_WEIGHT
+                terms.weighted_destroys += rm
 
         remaining -= batch
 
-    # ── Penalidade por blocos da row 0 que sobreviveram ──
+    # ── Estado FINAL: HP que sobrou vivo na fileira crítica ──
     for bid, hp in block_hp.items():
         if hp > 0:
             b = block_map.get(bid)
             if b is not None and b.row_index == 0:
-                total_score -= cfg.SCORE_ROW0_SURVIVE_PENALTY * hp
-
-    if total_hits > 10:
-        total_score += cfg.SCORE_LOOP_BONUS * (total_hits // 10)
+                terms.row0_surviving_hp += hp
 
     return SimResult(
         angle=angle_deg,
-        score=total_score,
-        total_hits=total_hits,
-        weighted_hits=total_weighted,
-        danger_hits=total_danger,
+        score=compute_score(terms),
+        total_hits=terms.total_hits,
+        weighted_hits=terms.weighted_hits,
+        danger_hits=terms.danger_hits,
         blocks_destroyed=total_destroyed,
         powerups_collected=total_pu,
-        extra_balls_collected=total_extra,
+        extra_balls_collected=terms.extra_balls,
         path=first_path if record_path else [],
         collisions=first_collisions if record_path else [],
         ball_paths=ball_paths if record_path else [],
@@ -581,13 +611,12 @@ def find_best_angle(
         )
         all_results.append(r)
 
-    has_danger = any(b.row_index <= 1 for b in blocks)
-    if has_danger:
-        all_results.sort(
-            key=lambda r: (r.danger_hits, r.weighted_hits, r.total_hits), reverse=True
-        )
-    else:
-        all_results.sort(key=lambda r: (r.weighted_hits, r.total_hits), reverse=True)
+    # Ordenação única por score. Antes havia dois modos: com bloco em row 0-1, o
+    # desempate lexicográfico por danger_hits vinha primeiro — o que fazia um tiro
+    # que belisca 3x um bloco de 50 HP da fileira crítica vencer um que a destrói e
+    # ainda limpa 5 outros. Os ROW_MULTIPLIERS (row0=100x) já codificam esse perigo
+    # de forma contínua, então a camada extra era redundante e prejudicial.
+    all_results.sort(key=lambda r: (r.score, r.total_hits), reverse=True)
     best = all_results[0]
 
     best_with_path = simulate_trajectory(

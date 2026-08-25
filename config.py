@@ -42,6 +42,8 @@ LEVEL_BOTS = [_GRID_TOP_Y + (7 - i) * BLOCK_SIZE - 1 for i in range(7)]
 # antigo (tentativa anterior): LEVEL_BOTS[0] = WALL_BOTTOM = 575, mas esticava
 # a fileira ate a base do playfield e fazia o codigo detectar o player como bloco.
 LEVEL_BOTS[0] = 513
+# Centro Y de cada fileira. Derivado — consumido apenas por tools/ (calibrate_levels,
+# visualizar_masks). O bot em si usa LEVEL_TOPS/LEVEL_BOTS via vision._get_row_index.
 LEVELS = [(t + b) // 2 for t, b in zip(LEVEL_TOPS, LEVEL_BOTS)]
 
 
@@ -72,13 +74,11 @@ BLOCK_COLOR_RANGES = [
     ("roxo", np.array([126, 200, 150]), np.array([143, 255, 255])),
     ("vermelho", np.array([0, 200, 150]), np.array([9, 255, 255])),
     ("laranja", np.array([16, 200, 150]), np.array([22, 255, 255])),
+    ("laranja_escuro", np.array([9, 200, 150]), np.array([16, 255, 255])),
     ("magenta", np.array([144, 180, 120]), np.array([162, 255, 255])),
     ("amarelo_ouro", np.array([22, 200, 150]), np.array([28, 255, 255])),
-    ("laranja_escuro", np.array([9, 200, 150]), np.array([16, 255, 255])),
     ("rosa", np.array([162, 200, 150]), np.array([179, 255, 255])),
     ("verde", np.array([65, 180, 120]), np.array([78, 255, 255])),
-    ("amarelo_ouro", np.array([22, 200, 150]), np.array([28, 255, 255])),
-    ("laranja2", np.array([16, 200, 150]), np.array([22, 255, 255])),
     ("azul", np.array([108, 100, 150]), np.array([120, 255, 255])),  # #5c6ebf
     ("violeta", np.array([118, 110, 160]), np.array([128, 255, 255])),  # #6557cf
     ("ciano", np.array([82, 120, 130]), np.array([92, 255, 255])),  # #42ab9f
@@ -89,10 +89,15 @@ BLOCK_COLOR_RANGES = [
 BLOCK_HSV_LOW = np.array([0, 60, 60])
 BLOCK_HSV_HIGH = np.array([179, 255, 255])
 
-# Número de HP — texto escuro sobre fundo colorido
+# Número de HP — texto escuro sobre fundo colorido.
+# O componente V (índice 2) é a fonte única do limiar de "pixel escuro = texto",
+# usado nos DOIS caminhos de vision._get_block_text_mask (dentro do hull colorido
+# e no fallback por HSV). Antes o caminho principal tinha `inRange(v, 0, 130)`
+# hardcoded enquanto o fallback lia V<=99 daqui — dois valores para a mesma decisão.
 # antigo (branco): [0, 0, 252] / [175, 255, 255]
+# antigo (V<=99): np.array([179, 255, 99]) — divergia do 130 usado na prática
 HP_TEXT_HSV_LOW = np.array([0, 0, 0])
-HP_TEXT_HSV_HIGH = np.array([179, 255, 99])
+HP_TEXT_HSV_HIGH = np.array([179, 255, 130])
 
 # BOLA branca
 BALL_HSV_LOW = np.array([0, 0, 200])
@@ -144,38 +149,66 @@ POLY_APPROX_FACTOR = 0.04  # fator do approxPolyDP
 # BALL_RADIUS = max(3, int(BLOCK_SIZE * 0.22))
 BALL_RADIUS = 9
 
-BALL_SPEED = 8.0  # pixels por step da simulação
-MAX_SIM_STEPS = 2000  # limite de passos por simulação de ângulo
-SIM_STEP_SIZE = 2.0  # resolução do step (menor = mais preciso, mais lento)
+# DECORATIVO — não tem efeito nenhum na simulação. physics._sim_one_ball faz
+# `vel.normalized() * BALL_SPEED` e depois avança `vel * (SIM_STEP_SIZE / BALL_SPEED)`:
+# multiplica e divide pelo mesmo valor, então o avanço é sempre
+# `direção × SIM_STEP_SIZE`, independente do que estiver aqui. Quem controla a
+# resolução da simulação é o SIM_STEP_SIZE. Mantido só para não quebrar imports.
+BALL_SPEED = 8.0
+
+# ── Alcance × precisão da simulação ──
+# MAX_SIM_STEPS e SIM_STEP_SIZE são ACOPLADOS: o que governa o alcance da bola é o
+# PRODUTO dos dois (quantos px de percurso cabem num voo). Mexer só na precisão
+# encurtava o voo em silêncio — ex: SIM_STEP_SIZE 2.0→0.5 com MAX_SIM_STEPS
+# 2000→3000 derrubou o orçamento de 4000px para 1500px, e como o playfield tem
+# 573px de altura (2×573/sin(19°) = 3520px para subir e voltar), todo ângulo
+# abaixo de ~57° era truncado no meio do voo.
+# Agora o orçamento é declarado e o nº de steps é derivado dele.
+SIM_PATH_BUDGET = 4000.0  # px de percurso que a bola pode percorrer por voo
+SIM_STEP_SIZE = 1.0  # antigo: 0.5 (2.7x mais lento); antes disso: 2.0
+MAX_SIM_STEPS = int(SIM_PATH_BUDGET / SIM_STEP_SIZE)
 
 # ─────────────────────────────────────────────
 # SCORING — pesos para a decisão de ângulo
 # ─────────────────────────────────────────────
-SCORE_HIT_BLOCK = 1  # cada hit em bloco
-SCORE_DESTROY_BLOCK = 50  # bloco destruído (hp <= 0)
-SCORE_HIT_POWERUP = 200  # coletar power-up (+)
-SCORE_LOOP_BONUS = 100  # bônus se detectar "loop" entre blocos próximos
-SCORE_ROW0_SURVIVE_PENALTY = (
-    100  # penalidade por HP restante em blocos da row 0 após simulação
-)
+# Todos os pesos abaixo entram num ÚNICO score (physics.compute_score), que é o
+# critério de ordenação de find_best_angle. Antes havia duas notas paralelas: os
+# SCORE_* alimentavam `score`, que era só impresso, e o ranking usava outra conta.
+#
+# antigo (decorativos — nunca influenciaram a escolha do ângulo):
+#   SCORE_HIT_BLOCK = 1              -> virou W_HIT
+#   SCORE_DESTROY_BLOCK = 50         -> removido (redundante com W_DESTROY)
+#   SCORE_HIT_POWERUP = 200          -> removido (redundante com W_EXTRA_BALL/W_BONUS_B)
+#   SCORE_LOOP_BONUS = 100           -> virou W_LOOP
+#   SCORE_ROW0_SURVIVE_PENALTY = 100 -> virou W_ROW0_SURVIVE
+# antigo (estes já valiam, só mudaram de nome):
+#   DESTROY_WEIGHT = 5      -> W_DESTROY
+#   EXTRA_BALL_WEIGHT = 30  -> W_EXTRA_BALL
+#   BONUS_B_WEIGHT = 5      -> W_BONUS_B
 
-# Pesos para ranking (weighted_hits)
-DESTROY_WEIGHT = 5  # bônus por bloco destruído (multiplicado por ROW_MULTIPLIER)
-EXTRA_BALL_WEIGHT = (
-    30  # bônus por bola extra coletada (abaixo de row 0/1, acima do resto)
-)
-BONUS_B_WEIGHT = 5  # bônus pequeno por moeda B coletada (~2 hits em row 2)
+W_HIT = 1.0  # por hit, já ponderado por ROW_MULTIPLIERS
+W_DESTROY = 5.0  # por bloco destruído, já ponderado por ROW_MULTIPLIERS
+W_EXTRA_BALL = 30.0  # por bola extra coletada
+W_BONUS_B = 5.0  # por moeda B coletada (~2 hits em row 2)
+
+# Estes dois começam DESLIGADOS: são regras que nunca rodaram de verdade, então
+# entram em produção uma de cada vez, medindo o efeito nos turnos sobrevividos.
+# W_ROW0_SURVIVE multiplica o HP que sobrou vivo na fileira crítica — é a única
+# regra que olha o estado FINAL do tabuleiro, não o caminho da bola. Subir devagar
+# (1..5): com ROW_MULTIPLIERS[0]=100, valor alto faz o bot ignorar o resto do jogo.
+W_ROW0_SURVIVE = 0.0
+W_LOOP = 0.0  # por grupo de 10 hits no mesmo voo ("loop" entre blocos)
 
 # Multiplicadores por fileira (índice 0 = mais baixa, LEVELS[0]=480)
 # antigo: 0:15, 1:5
 ROW_MULTIPLIERS = {
     0: 100.0,  # GAME OVER IMINENTE: última fileira
     1: 50.0,  # PERIGO: penúltima fileira
-    2: 2.5,  # MÉDIO: Terceira fileira (Y≈352)
-    3: 1.5,  # NORMAL: Quarta fileira (Y≈289)
-    4: 1.0,  # PADRÃO: Quinta fileira (Y≈225)
-    5: 0.8,  # BAIXO: Sexta fileira (Y≈162)
-    6: 0.5,  # DESPREZÍVEL: Fileira lá no teto (Y≈99)
+    2: 25,  # MÉDIO: Terceira fileira (Y≈352)
+    3: 15,  # NORMAL: Quarta fileira (Y≈289)
+    4: 10,  # PADRÃO: Quinta fileira (Y≈225)
+    5: 8,  # BAIXO: Sexta fileira (Y≈162)
+    6: 5,  # DESPREZÍVEL: Fileira lá no teto (Y≈99)
 }
 
 # Substituído por ROW_MULTIPLIERS (scoring por fileira via block.row_index)
@@ -189,14 +222,20 @@ ROW_MULTIPLIERS = {
 # ─────────────────────────────────────────────
 ANGLE_MIN = 19  # graus (0 = direita pura, 90 = cima, 180 = esquerda)
 ANGLE_MAX = 161  # simetrico: 180 - 19
-ANGLE_STEP = 1  # resolução da busca (1° = 160 simulações)
+# DECORATIVO — hoje só aparece num print em main.py. physics.find_best_angle usa
+# `range(ANGLE_MIN, ANGLE_MAX + 1)`, com passo 1 chumbado, então mudar este valor
+# não acelera nem afina a busca: muda só o texto do console. Ativar fica para depois.
+ANGLE_STEP = 1  # resolução da busca (1° = 143 simulações)
 
 # ─────────────────────────────────────────────
 # EXECUÇÃO / PYAUTOGUI
 # ─────────────────────────────────────────────
 DRAG_DISTANCE = 150  # distância do arrasto em pixels
 DRAG_DURATION = 0.15  # segundos do gesto de arrasto
-TURN_WAIT_TIME = 3.5  # segundos aguardando as bolas pararem após o disparo
+# removido: TURN_WAIT_TIME = 3.5
+#   Era só o default de executor.wait_for_turn_end(), que ninguém chamava — o loop
+#   real espera com polling de vision.detect_round_end(). Removido junto com
+#   wait_for_turn_end/wait_for_turn_end_smart.
 
 # Botão de acelerar (coordenadas absolutas na tela)
 SPEED_UP_X = 1789

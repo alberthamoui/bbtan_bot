@@ -4,7 +4,9 @@ executor.py — Converte decisões do bot em ações na tela via PyAutoGUI.
 Responsabilidades:
   - Converter ângulo em coordenada de arrasto na tela
   - Executar o gesto de disparo (click-drag ou click)
-  - Esperar o turno acabar
+
+A espera pelo fim do turno NÃO mora aqui — é feita no loop de main.py com
+polling de vision.detect_round_end().
 """
 
 import math
@@ -89,45 +91,7 @@ def execute_shot(ball_x: float, ball_y: float, angle_deg: float):
     speed_up_click()
 
 
-def wait_for_turn_end(timeout: float = cfg.TURN_WAIT_TIME):
-    """
-    Espera o turno atual acabar.
-
-    Versão simples: apenas espera um tempo fixo.
-    Versão avançada (TODO): monitora a tela até as bolas pararem de se mover.
-    """
-    time.sleep(timeout)
-
-
-def wait_for_turn_end_smart(ball_y_threshold: float = None):
-    """
-    Espera inteligente: monitora se a bola voltou para a base.
-    Usa captura rápida para checar se ainda há movimento.
-    """
-    from vision import capture_screen, detect_ball
-
-    if ball_y_threshold is None:
-        ball_y_threshold = cfg.WALL_BOTTOM - 20
-
-    check_interval = 0.3  # checa a cada 300ms
-    stable_count = 0
-    max_wait = 15.0  # timeout máximo de 15 segundos
-    elapsed = 0.0
-
-    while elapsed < max_wait:
-        time.sleep(check_interval)
-        elapsed += check_interval
-
-        frame = capture_screen()
-        ball_pos = detect_ball(frame)
-
-        if ball_pos and ball_pos[1] > ball_y_threshold:
-            stable_count += 1
-            if stable_count >= 3:  # bola na base por 3 checks consecutivos
-                time.sleep(0.5)  # pausa extra de segurança
-                return
-        else:
-            stable_count = 0
-
-    # Timeout — continua mesmo assim
-    time.sleep(0.5)
+# removido: wait_for_turn_end() e wait_for_turn_end_smart()
+#   Nenhuma das duas era chamada. O loop de main.py espera o turno acabar com
+#   polling de vision.detect_round_end() (as 4 regiões rosa). Junto com elas saiu
+#   o cfg.TURN_WAIT_TIME, que só existia como default da primeira.

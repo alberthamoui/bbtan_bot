@@ -29,7 +29,7 @@ from vision import (
 )
 from physics import find_best_angle, simulate_trajectory
 
-WINDOW_NAME = "BBTAN Monitor"
+WINDOW_NAME = "Monitor: Deteccao + simulacao"
 SCALE = 0.5  # escala da janela (0.5 = metade do tamanho)
 
 

@@ -136,7 +136,7 @@ def run_turn(
         vis = state.debug_frame.copy()
         vis = draw_trajectory(vis, best.path, color=(0, 200, 255), thickness=2)
         vis = draw_stats_overlay(vis, best, state)
-        cv2.imshow("BBTAN Bot", vis)
+        cv2.imshow("Bot: Trajetoria escolhida", vis)
         key = cv2.waitKey(1) & 0xFF
         if key == ord("q"):
             return False, 0
@@ -223,7 +223,7 @@ def main():
 
             print(f"\n--- Turno {turn} ---")
 
-            # Captura e atualiza "Blocos por Level"
+            # Captura e atualiza a janela "Grid: Blocos por fileira"
             time.sleep(3)
             state = scan_game()
             update_level_display(

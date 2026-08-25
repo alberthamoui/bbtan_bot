@@ -67,7 +67,7 @@ class Block:
     )  # 0 = coluna mais à esquerda, 6 = mais à direita; -1 = desconhecido
     hp_mask: np.ndarray = field(
         default_factory=lambda: np.empty((0, 0), dtype=np.uint8), repr=False
-    )  # text_mask gerada por _get_block_text_mask para debug DEBUG_MASK_HP
+    )  # text_mask de _get_block_text_mask; alimenta a janela 'OCR: HP lido por bloco'
 
     @property
     def rect(self) -> Tuple[int, int, int, int]:
@@ -383,9 +383,14 @@ def _get_block_text_mask(roi_bgr: np.ndarray, is_triangle: bool = False) -> np.n
                 block_region = best_mask
 
         # Pega o numero dentro dos blocos
-        # Texto é sempre quase preto — procura pixels escuros dentro do bloco
-        # antigo: cv2.inRange(v_channel, 0, 90)
-        dark = cv2.inRange(v_channel, 0, 130)
+        # Texto é sempre quase preto — procura pixels escuros dentro do bloco.
+        # Limiar vem do componente V de HP_TEXT_HSV_*, o mesmo usado no fallback
+        # acima. antigo: cv2.inRange(v_channel, 0, 130) hardcoded — divergia do
+        # config, que dizia V<=99 e só valia para o fallback.
+        # antes disso: cv2.inRange(v_channel, 0, 90)
+        dark = cv2.inRange(
+            v_channel, int(cfg.HP_TEXT_HSV_LOW[2]), int(cfg.HP_TEXT_HSV_HIGH[2])
+        )
         text_mask = cv2.bitwise_and(dark, block_region)
 
         if is_triangle and cfg.VISION_VERBOSE:
@@ -421,7 +426,7 @@ def _read_hp(
     pra recuperar pixels de texto cortados pela hipotenusa do triângulo.
 
     Retorna (hp, text_mask). text_mask é sempre retornada (mesmo em falha)
-    para alimentar a janela de debug DEBUG_MASK_HP — é vazia 0x0 só quando
+    para alimentar a janela 'OCR: HP lido por bloco' — é vazia 0x0 só quando
     a ROI nem chegou a ser processada.
     """
     empty = np.zeros((1, 1), dtype=np.uint8)
@@ -519,23 +524,39 @@ def _qualifies_as_big_block(
     w: int,
     h: int,  # bbox candidata em coords crop-relativas
     tolerance: float = 0.15,  # margem ± em cima do tamanho ideal 2*BLOCK_SIZE
+    min_fill: float = 0.80,  # fracao minima da BBOX que precisa estar colorida
     dominance_threshold: float = 0.80,  # fracao minima da area MASCARADA que a cor top precisa cobrir
 ) -> bool:
     """
-    Gate pra categoria "bloco 2x2 unico". As TRES checagens abaixo tem que passar:
+    Gate pra categoria "bloco 2x2 unico". As QUATRO checagens abaixo tem que passar:
 
       1. Dimensao (~ 2*BLOCK_SIZE ± 15% em width E height): descarta contornos
          que nao tem cara de 2x2 (ex: 1x2 fundido ~60x128, ou 3x3 gigante ~192x192).
-      2. Cor uniforme dominante: passa TODAS as faixas de BLOCK_COLOR_RANGES no
+      2. Preenchimento da bbox: a area colorida tem que cobrir >= min_fill (80%)
+         da bbox INTEIRA. Um 2x2 macico preenche ~95% (o resto sao os furos dos
+         digitos do HP); qualquer grupo com celula vazia ou com triangulo (que
+         ocupa so metade da celula) fica bem abaixo disso.
+      3. Cor uniforme dominante: passa TODAS as faixas de BLOCK_COLOR_RANGES no
          ROI; a cor de maior contagem tem que representar >= dominance_threshold
          (80%) do total mascarado. Se duas cores dividem o ROI significativamente
          (ex: roxo 55% + vermelho 40% da area mascarada), rejeita — sao 2+ blocos
          adjacentes de cores diferentes, nao um 2x2 unico.
-      3. Contagem de numeros de HP: reusa _get_block_text_mask pra isolar o texto
+      4. Contagem de numeros de HP: reusa _get_block_text_mask pra isolar o texto
          escuro dentro do bloco, agrupa os digitos em "clusters" (mesmo HP) por
          proximidade (BLOCK_SIZE/3 em X, BLOCK_SIZE/4 em Y). Um 2x2 legitimo tem
          UM cluster (o HP centralizado). Se aparecerem 2+ clusters, ha um HP por
          quadrante = 2+ blocos coloridos iguais fundidos, nao um 2x2.
+
+    A checagem 2 foi adicionada depois que "2 blocos 1x1 roxos + 1 triangulo rosa"
+    passou como 2x2 no jogo real. As checagens 3 e 4 falharam JUNTAS nesse caso:
+      - a 3 mede a cor dominante como fracao dos pixels MASCARADOS, entao a celula
+        vazia sumia da conta e o roxo dava 80.45% contra um limiar de 80% — passou
+        por 0.5%, dentro do ruido de anti-aliasing;
+      - a 4 depende de _get_block_text_mask, que usa max(contours) e portanto so
+        enxerga o MAIOR blob da cor dominante. Com dois quadrados roxos separados
+        ela lia o HP de um so, via 1 cluster e aprovava.
+    O preenchimento nao tem esse ponto cego: media pela bbox inteira, deu 0.58
+    contra 0.95 de um 2x2 real — margem grande em vez de fio de navalha.
 
     Rejeicoes sao printadas com valores medidos pra auditoria.
     """
@@ -557,13 +578,27 @@ def _qualifies_as_big_block(
             )
         return False  # dim errada -> ja retorna, nem chega na cor
 
-    # --- Checagem 2: cor uniforme dominante ---
     roi = hsv[y : y + h, x : x + w]  # recorta a bbox no frame HSV
     if roi.size == 0:  # bbox degenerada (fora do frame etc)
         if cfg.VISION_VERBOSE:
             print(f"[big-block reject roi-empty] bbox=({x},{y}) {w}x{h}")
         return False  # sem dados -> rejeita
 
+    # --- Checagem 2: preenchimento da bbox ---
+    # Denominador eh a bbox INTEIRA (nao a area mascarada), entao celula vazia e
+    # triangulo — que ocupa metade da celula — puxam o valor pra baixo de verdade.
+    fill_mask = cv2.inRange(roi, cfg.BLOCK_HSV_LOW, cfg.BLOCK_HSV_HIGH)
+    fill = np.count_nonzero(fill_mask) / fill_mask.size
+    if fill < min_fill:
+        if cfg.VISION_VERBOSE:
+            print(
+                f"[big-block reject fill] bbox=({x},{y}) {w}x{h}"
+                f"  preenchimento={fill:.0%} (min {min_fill:.0%})"
+                f"  -> ha celula vazia ou triangulo no grupo"
+            )
+        return False  # bbox esburacada -> agrupamento de blocos, nao um 2x2
+
+    # --- Checagem 3: cor uniforme dominante ---
     color_counts = []  # lista (nome, nnz) pra ranking depois
     for (
         name,
@@ -604,7 +639,7 @@ def _qualifies_as_big_block(
             )
         return False  # mistura de cores -> cluster de blocos, nao 2x2
 
-    # --- Checagem 3: contagem de numeros de HP ---
+    # --- Checagem 4: contagem de numeros de HP ---
     roi_bgr = cv2.cvtColor(
         roi, cv2.COLOR_HSV2BGR
     )  # _get_block_text_mask espera BGR; ROI eh pequeno, conversao barata
@@ -1650,5 +1685,5 @@ def scan_game() -> GameState:
 
 def show_debug(state: GameState, wait: int = 0):
     """Mostra o frame de debug com anotações. Pressione qualquer tecla para fechar."""
-    cv2.imshow("BBTAN Bot - Debug", state.debug_frame)
+    cv2.imshow("Debug: Frame anotado", state.debug_frame)
     cv2.waitKey(wait)
