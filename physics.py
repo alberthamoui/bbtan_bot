@@ -593,13 +593,31 @@ def find_best_angle(
     ball_count: int,
     angle_min: int = cfg.ANGLE_MIN,
     angle_max: int = cfg.ANGLE_MAX,
+    progress_callback=None,
 ) -> Tuple[SimResult, List[SimResult]]:
     """
     Simula todos os ângulos de 1 em 1 grau.
     Returns: (melhor_resultado, lista_todos_resultados)
+
+    progress_callback(feitos, total): chamado a cada ângulo simulado, e mais uma
+    vez ao fim da re-simulação do melhor ângulo. Opcional — physics não imprime
+    nada por conta própria; quem chama decide como (ou se) mostra o progresso.
+    O total inclui a re-simulação final, entao a barra so chega a 100% quando a
+    jogada esta de fato decidida.
+
+    Progresso e contado por ANGULO, sem tentar pesar o custo de cada um. Uma
+    tentativa de pesar por 1/sin(angulo) (trajetoria rasa percorre mais) foi
+    medida e saiu PIOR que a contagem simples: 26.6% de erro contra 21.4%. O
+    custo real varia 100x entre angulos (0.9ms a 90ms) e depende de quantos
+    blocos a bola encontra antes de voltar a base — ou seja, do tabuleiro, nao
+    do angulo. Nenhum modelo estatico acerta isso; quem chama que estime o
+    tempo restante pela media corrida, que se auto-corrige.
     """
+    angles = list(range(angle_min, angle_max + 1))
+    total_steps = len(angles) + 1  # +1 = re-simulação com path
+
     all_results = []
-    for a in range(angle_min, angle_max + 1):
+    for i, a in enumerate(angles):
         r = simulate_trajectory(
             ball_x,
             ball_y,
@@ -610,6 +628,8 @@ def find_best_angle(
             record_path=False,
         )
         all_results.append(r)
+        if progress_callback is not None:
+            progress_callback(i + 1, total_steps)
 
     # Ordenação única por score. Antes havia dois modos: com bloco em row 0-1, o
     # desempate lexicográfico por danger_hits vinha primeiro — o que fazia um tiro
@@ -628,5 +648,7 @@ def find_best_angle(
         ball_count=ball_count,
         record_path=True,
     )
+    if progress_callback is not None:
+        progress_callback(total_steps, total_steps)
 
     return best_with_path, all_results

@@ -15,6 +15,7 @@ Uso:
 """
 
 import argparse
+import sys
 import time
 import threading
 import cv2
@@ -61,6 +62,60 @@ def parse_args():
         help="Habilita prints de debug detalhados do modulo vision",
     )
     return parser.parse_args()
+
+
+def make_progress_bar(prefix: str = "  Simulando", width: int = 28):
+    """
+    Devolve um callback (feitos, total) que desenha uma barra de progresso na
+    mesma linha do terminal:
+
+        Simulando [::::::::::::::____________] -  50%   72/144   ~2.0s
+
+    Detalhes que importam:
+      - Redesenha só quando o inteiro do percentual muda (senão seriam 144
+        writes por turno, o que pisca feio).
+      - Estima o tempo restante pela média corrida, e só a partir de 10% — o
+        custo por ângulo varia ~100x (0.9ms a 90ms) conforme quantos blocos a
+        bola encontra, então uma estimativa com poucas amostras chuta alto.
+      - Ao chegar em 100% LIMPA a linha, porque logo em seguida run_turn imprime
+        o resultado com o tempo total ("Simulacao: X.XXs").
+      - Se a saída não for um terminal (pipe, redirecionamento), devolve None:
+        aí find_best_angle nem chama o callback e o log não vira sopa de '\\r'.
+    """
+    if not sys.stdout.isatty():
+        return None
+
+    state = {"t0": None, "last_pct": -1}
+
+    def report(done: int, total: int):
+        now = time.perf_counter()
+        if state["t0"] is None:
+            state["t0"] = now
+
+        pct = int(100 * done / total)
+        if pct == state["last_pct"] and done < total:
+            return  # nada de novo pra mostrar
+        state["last_pct"] = pct
+
+        if done >= total:
+            # Limpa a linha inteira — o resumo do turno vem logo abaixo
+            sys.stdout.write("\r" + " " * (width + 40) + "\r")
+            sys.stdout.flush()
+            return
+
+        # ETA pela media corrida. O custo por angulo varia ~100x de forma
+        # imprevisivel (depende do tabuleiro), entao a estimativa e grosseira no
+        # comeco e vai se corrigindo; so mostra depois de 10% pra nao chutar alto.
+        elapsed = now - state["t0"]
+        restante = (elapsed / done) * (total - done) if done else 0.0
+        eta = f"   ~{restante:.1f}s" if pct >= 10 else ""
+
+        filled = int(width * done / total)
+        bar = ":" * filled + "_" * (width - filled)
+        sys.stdout.write(f"\r{prefix} [{bar}] - {pct:3d}%   {done}/{total}{eta}")
+        sys.stdout.flush()
+
+    return report
 
 
 def run_turn(
@@ -118,6 +173,7 @@ def run_turn(
         state.blocks,
         state.powerups,
         ball_count=ball_count,
+        progress_callback=make_progress_bar(),
     )
     sim_time = time.perf_counter() - t0
 
