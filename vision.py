@@ -517,6 +517,14 @@ def _get_col_index(cx: float) -> int:
     return -1
 
 
+# Diagnostico do gate 2x2 — alimentado por _qualifies_as_big_block a cada
+# chamada e consumido pelo painel "gate2x2" de tools/visualizar_masks.py.
+# Limpo no inicio de cada detect_blocks(). Cada item:
+#   {bbox, dim_ok, fill, dominancia, n_hps, veredito, motivo}
+# Os valores sao os MEDIDOS pelo proprio gate — nao ha logica duplicada.
+GATE_2X2_DIAG: List[dict] = []
+
+
 def _qualifies_as_big_block(
     hsv: np.ndarray,  # frame HSV inteiro; usado pra cropar a bbox e rodar as color masks
     x: int,
@@ -558,8 +566,25 @@ def _qualifies_as_big_block(
     O preenchimento nao tem esse ponto cego: media pela bbox inteira, deu 0.58
     contra 0.95 de um 2x2 real — margem grande em vez de fio de navalha.
 
-    Rejeicoes sao printadas com valores medidos pra auditoria.
+    Rejeicoes sao printadas com valores medidos pra auditoria, e cada avaliacao
+    (aprovada ou nao) vai pra GATE_2X2_DIAG pro painel de debug mostrar.
     """
+    _diag = {
+        "bbox": (x, y, w, h),
+        "dim_ok": None,
+        "fill": None,
+        "dominancia": None,
+        "n_hps": None,
+        "veredito": False,
+        "motivo": "",
+    }
+    GATE_2X2_DIAG.append(_diag)
+
+    def _resultado(ok: bool, motivo: str) -> bool:
+        _diag["veredito"] = ok
+        _diag["motivo"] = motivo
+        return ok
+
     # --- Checagem 1: dimensao ---
     expected = (
         2 * cfg.BLOCK_SIZE
@@ -568,6 +593,7 @@ def _qualifies_as_big_block(
         expected * (1 - tolerance)
     )  # limite inferior da faixa (~108 com tolerance=0.15)
     dim_hi = int(expected * (1 + tolerance))  # limite superior (~147)
+    _diag["dim_ok"] = dim_lo <= w <= dim_hi and dim_lo <= h <= dim_hi
     if not (
         dim_lo <= w <= dim_hi and dim_lo <= h <= dim_hi
     ):  # w OU h fora da faixa -> nao eh 2x2
@@ -576,19 +602,20 @@ def _qualifies_as_big_block(
                 f"[big-block reject dim] bbox=({x},{y}) {w}x{h}"
                 f"  faixa=[{dim_lo}..{dim_hi}]"
             )
-        return False  # dim errada -> ja retorna, nem chega na cor
+        return _resultado(False, "dimensao")
 
     roi = hsv[y : y + h, x : x + w]  # recorta a bbox no frame HSV
     if roi.size == 0:  # bbox degenerada (fora do frame etc)
         if cfg.VISION_VERBOSE:
             print(f"[big-block reject roi-empty] bbox=({x},{y}) {w}x{h}")
-        return False  # sem dados -> rejeita
+        return _resultado(False, "roi vazia")
 
     # --- Checagem 2: preenchimento da bbox ---
     # Denominador eh a bbox INTEIRA (nao a area mascarada), entao celula vazia e
     # triangulo — que ocupa metade da celula — puxam o valor pra baixo de verdade.
     fill_mask = cv2.inRange(roi, cfg.BLOCK_HSV_LOW, cfg.BLOCK_HSV_HIGH)
     fill = np.count_nonzero(fill_mask) / fill_mask.size
+    _diag["fill"] = fill
     if fill < min_fill:
         if cfg.VISION_VERBOSE:
             print(
@@ -596,7 +623,7 @@ def _qualifies_as_big_block(
                 f"  preenchimento={fill:.0%} (min {min_fill:.0%})"
                 f"  -> ha celula vazia ou triangulo no grupo"
             )
-        return False  # bbox esburacada -> agrupamento de blocos, nao um 2x2
+        return _resultado(False, "preenchimento")
 
     # --- Checagem 3: cor uniforme dominante ---
     color_counts = []  # lista (nome, nnz) pra ranking depois
@@ -618,7 +645,7 @@ def _qualifies_as_big_block(
     if total_masked == 0:  # ROI nao ativou nenhuma cor conhecida (ex: fundo preto)
         if cfg.VISION_VERBOSE:
             print(f"[big-block reject no-color] bbox=({x},{y}) {w}x{h}")
-        return False  # sem cor -> nao eh bloco
+        return _resultado(False, "sem cor")
 
     color_counts.sort(
         key=lambda t: -t[1]
@@ -627,6 +654,7 @@ def _qualifies_as_big_block(
     dominance = (
         dominant_nnz / total_masked
     )  # fracao do total mascarado que a cor top domina
+    _diag["dominancia"] = dominance
     if (
         dominance < dominance_threshold
     ):  # abaixo de 80% -> ha outra cor competindo significativamente
@@ -637,7 +665,7 @@ def _qualifies_as_big_block(
                 f"  dominante={dominant_name}={dominance:.0%}"
                 f"  top3={top3}"
             )
-        return False  # mistura de cores -> cluster de blocos, nao 2x2
+        return _resultado(False, "cores misturadas")
 
     # --- Checagem 4: contagem de numeros de HP ---
     roi_bgr = cv2.cvtColor(
@@ -660,8 +688,9 @@ def _qualifies_as_big_block(
             continue
         components.append((cxi + cwi / 2.0, cyi + chi / 2.0))
 
+    _diag["n_hps"] = len(components)
     if len(components) <= 1:  # 0 ou 1 componente -> definitivamente 1 HP so
-        return True  # (0 acontece quando HP nao foi detectado, tolera)
+        return _resultado(True, "ok")
 
     dx_max = cfg.BLOCK_SIZE / 3.0  # ~21 px: gap max entre digitos do MESMO HP
     dy_max = (
@@ -688,6 +717,7 @@ def _qualifies_as_big_block(
         if not joined:
             clusters.append([(cx_i, cy_i)])  # muito longe -> novo HP
 
+    _diag["n_hps"] = len(clusters)
     if len(clusters) > 1:  # 2+ HPs = 2+ blocos, nao eh 2x2 unico
         cluster_centers = []  # centroide medio de cada cluster + qtd digitos, pra debug
         for cluster in clusters:
@@ -700,13 +730,14 @@ def _qualifies_as_big_block(
                 f"  n_HPs={len(clusters)}"
                 f"  centros(x,y,digitos)={cluster_centers}"
             )
-        return False  # multiplos HPs -> multiplos blocos, rejeita
+        return _resultado(False, "varios HPs")
 
-    return True  # passou dim + cor + hp-count -> qualifica como 2x2 unico
+    return _resultado(True, "ok")
 
 
 def detect_blocks(frame: np.ndarray) -> List[Block]:
     """Detecta todos os blocos coloridos no frame."""
+    GATE_2X2_DIAG.clear()  # diagnostico do gate 2x2 vale so pro frame atual
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
 
     raw_mask = cv2.inRange(hsv, cfg.BLOCK_HSV_LOW, cfg.BLOCK_HSV_HIGH)

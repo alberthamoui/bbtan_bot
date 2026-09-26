@@ -24,8 +24,11 @@ import config as cfg
 from vision import scan_game, detect_round_end, GameState
 from physics import find_best_angle
 from executor import execute_shot
-from tools.debug_view import draw_trajectory, draw_stats_overlay
-from tools.visualizar_masks import run_masks_window, update_level_display
+from tools.visualizar_masks import (
+    run_masks_window,
+    update_level_display,
+    update_shot_display,
+)
 
 
 def parse_args():
@@ -176,6 +179,7 @@ def run_turn(
         progress_callback=make_progress_bar(),
     )
     sim_time = time.perf_counter() - t0
+    update_shot_display(best, all_results, (ball_x, ball_y))
 
     print(f"  Melhor angulo: {best.angle:.1f}°")
     print(
@@ -188,14 +192,11 @@ def run_turn(
     print(f"  Dano por hit: {ball_count}x  |  Simulacao: {sim_time:.2f}s")
 
     # ── 3. DEBUG VISUAL ──
-    if debug:
-        vis = state.debug_frame.copy()
-        vis = draw_trajectory(vis, best.path, color=(0, 200, 255), thickness=2)
-        vis = draw_stats_overlay(vis, best, state)
-        cv2.imshow("Bot: Trajetoria escolhida", vis)
-        key = cv2.waitKey(1) & 0xFF
-        if key == ord("q"):
-            return False, 0
+    # A trajetoria agora e o painel "trajetoria" de visualizar_masks, desenhado
+    # pela thread de masks. Antes esta funcao criava a propria janela, o que
+    # punha DUAS threads chamando imshow/waitKey — o HighGUI do OpenCV nao e
+    # thread-safe e travava a janela de forma intermitente no Windows.
+    # (a flag --debug ficou sem uso; ligue/desligue o painel em JANELAS)
 
     # ── 4. EXECUÇÃO ──
     if not dry_run:
