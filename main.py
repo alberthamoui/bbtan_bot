@@ -12,17 +12,12 @@ Uso:
   python main.py              -> Roda o bot
   python main.py --debug      -> Mostra visualização a cada turno
   python main.py --dry-run    -> Simula sem executar ações no mouse
-  python main.py --prints     -> Roda o bot salvando um print da GAME_REGION
-                                 a cada turno em dirty-prints/
 """
 
 import argparse
 import sys
 import time
 import threading
-from datetime import datetime
-from pathlib import Path
-
 import cv2
 
 import config as cfg
@@ -69,30 +64,7 @@ def parse_args():
         action="store_true",
         help="Habilita prints de debug detalhados do modulo vision",
     )
-    parser.add_argument(
-        "--prints",
-        action="store_true",
-        help="Salva um print da tela do jogo (GAME_REGION) a cada turno, "
-        "antes da jogada, na pasta dirty-prints/",
-    )
     return parser.parse_args()
-
-
-PRINTS_DIR = Path(__file__).resolve().parent / "dirty-prints"
-
-
-def salvar_print(frame, turn: int) -> None:
-    """
-    Salva o frame CRU do scan (sem as anotações do debug_frame) em PRINTS_DIR.
-    Nome com data/hora + turno, pra não sobrescrever prints de outras sessões:
-    20260927_011745_turno012.png
-    """
-    PRINTS_DIR.mkdir(exist_ok=True)
-    nome = f"{datetime.now():%Y%m%d_%H%M%S}_turno{turn:03d}.png"
-    if cv2.imwrite(str(PRINTS_DIR / nome), frame):
-        print(f"  [print] dirty-prints/{nome}")
-    else:
-        print(f"  [!] Falha ao salvar print dirty-prints/{nome}")
 
 
 def make_progress_bar(prefix: str = "  Simulando", width: int = 28):
@@ -314,8 +286,6 @@ def main():
     print(f"  Angulos: {cfg.ANGLE_MIN}° a {cfg.ANGLE_MAX}° (step={cfg.ANGLE_STEP}°)")
     print(f"  Debug: {args.debug}  |  Dry-run: {args.dry_run}")
     print(f"  Smart-wait: {args.smart_wait}")
-    if args.prints:
-        print(f"  Prints: salvando em {PRINTS_DIR}")
     print("=" * 50)
     print()
 
@@ -367,11 +337,6 @@ def main():
             )
             print("  [scan] Estado capturado — display atualizado")
 
-            # Print da tela entre rodadas: é o mesmo frame que o bot analisou
-            # neste turno (tabuleiro parado, antes da jogada).
-            if args.prints:
-                salvar_print(state.raw_frame, turn)
-
             status = run_turn(
                 state=state,
                 debug=args.debug,
@@ -384,6 +349,8 @@ def main():
                 print(f"  GAME OVER — Score final apos {turnos_sobrevividos} turnos")
                 print(f"  Bolas no ultimo turno: {state.detected_ball_count}")
                 print(f"{'='*50}")
+
+                from datetime import datetime
 
                 with open("historico.txt", "a", encoding="utf-8") as f:
                     f.write(

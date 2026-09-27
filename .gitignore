@@ -27,5 +27,5 @@ tools/screenshot.png
 # Notebooks (scratch)
 tools/test.ipynb
 
-# Prints da tela salvos por main.py --prints
-dirty-prints/
+# Prints com o caminho ideal gerados por desenhar_caminho.py
+prints/
