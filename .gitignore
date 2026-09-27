@@ -1,18 +1,11 @@
-/tools
 /__pycache__
-config.py
-executor.py
-monitor.py
-physics.py
 test.ipynb
-vision.py
 notes.md
 image.png
 bash.exe.stackdump
 historico.txt
 situacao_atual.md
 plano_melhorias.md
-main_vision.py
 
 # Python
 __pycache__/
