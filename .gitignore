@@ -26,6 +26,3 @@ tools/screenshot.png
 
 # Notebooks (scratch)
 tools/test.ipynb
-
-# Prints da tela salvos por main.py --prints
-dirty-prints/
