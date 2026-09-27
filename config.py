@@ -139,7 +139,7 @@ RETRIEVE_CLICK = (1580, 961)
 # Tempo máximo (s) de uma rodada. Se o botão retrieve continuar na tela por mais
 # que isso, as bolas provavelmente estão num loop quase horizontal — o bot clica
 # no botão pra forçar o fim da rodada.
-TEMPO_MAX_RODADA = 120.0
+TEMPO_MAX_RODADA = 60 * 3
 
 # ─────────────────────────────────────────────
 # DETECÇÃO DE BLOCOS
