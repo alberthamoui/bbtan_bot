@@ -525,11 +525,17 @@ def simulate_trajectory(
             # do melhor angulo, entao o custo extra e desprezivel.
             batch = 1
         else:
+            # Só entram no lote as bolas que refazem o voo INTEIRO com o bloco
+            # ainda de pé. antigo: math.ceil(hp / nh) — com hp=5 e nh=2 dava 3
+            # bolas, mas a 3a quebra o bloco no 1o toque e segue outro caminho;
+            # o ceil creditava a ela os hits da trajetória antiga. nh <= hp
+            # sempre (local_hp de _sim_one_ball para de contar em 0), então o
+            # floor nunca dá 0.
             batch = remaining
             for bid, nh in hits_per_block.items():
                 hp = block_hp.get(bid, 0)
                 if hp > 0 and nh > 0:
-                    batch = min(batch, math.ceil(hp / nh))
+                    batch = min(batch, hp // nh)
             batch = max(1, batch)
 
         if record_path:
