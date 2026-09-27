@@ -778,6 +778,15 @@ def detect_blocks(frame: np.ndarray) -> List[Block]:
                 f"  -> {'big-area' if area > cfg.MAX_BLOCK_AREA else 'normal-path'}"
             )
 
+        # Máscara só com os pixels DESTE contorno. Os splits por grade abaixo
+        # varrem todas as cells dentro da bbox; medindo o fill na `mask` global,
+        # uma cell ocupada por OUTRO contorno que cai na bbox (ex: no vão de um
+        # L) passava no filtro e o bloco saía duplicado — uma vez aqui e outra
+        # quando o próprio contorno dele era processado.
+        own_mask = np.zeros_like(mask)
+        cv2.drawContours(own_mask, [cnt], -1, 255, cv2.FILLED)
+        own_mask = cv2.bitwise_and(mask, own_mask)
+
         # Contorno gigante (fusão morfológica de múltiplos blocos) — split por grade
         if area > cfg.MAX_BLOCK_AREA:
             # Fase 1: coleta cells sobreviventes (fill ≥ 0.40) e já classifica
@@ -795,7 +804,8 @@ def detect_blocks(frame: np.ndarray) -> List[Block]:
                         continue
                     cell_w = cell_x2 - cell_x
                     cell_h = cell_y2 - cell_y
-                    cell_roi = mask[cell_y:cell_y2, cell_x:cell_x2]
+                    # antigo: mask[...] (global) — contava cells de outros contornos
+                    cell_roi = own_mask[cell_y:cell_y2, cell_x:cell_x2]
                     if cell_roi.size == 0:
                         continue
                     fill = np.count_nonzero(cell_roi) / cell_roi.size
@@ -1236,7 +1246,7 @@ def detect_blocks(frame: np.ndarray) -> List[Block]:
                         cy2 = min(mask.shape[0], cell_y + cell_h)
                         cx1 = max(0, cell_x)
                         cx2 = min(mask.shape[1], cell_x + cell_w)
-                        cell_roi = mask[cy1:cy2, cx1:cx2]
+                        cell_roi = own_mask[cy1:cy2, cx1:cx2]  # antigo: mask (global)
                         if (
                             cell_roi.size == 0
                             or np.count_nonzero(cell_roi) < cell_w * cell_h * 0.15
@@ -1293,7 +1303,7 @@ def detect_blocks(frame: np.ndarray) -> List[Block]:
                     cy2 = min(mask.shape[0], cell_y + cell_h)
                     cx1 = max(0, cell_x)
                     cx2 = min(mask.shape[1], cell_x + cell_w)
-                    cell_roi = mask[cy1:cy2, cx1:cx2]
+                    cell_roi = own_mask[cy1:cy2, cx1:cx2]  # antigo: mask (global)
                     if (
                         cell_roi.size == 0
                         or np.count_nonzero(cell_roi) < cell_w * cell_h * 0.15
