@@ -21,9 +21,9 @@ import threading
 import cv2
 
 import config as cfg
-from vision import scan_game, detect_round_end, GameState
+from vision import scan_game, detect_retrieve_button, GameState
 from physics import find_best_angle
-from executor import execute_shot
+from executor import execute_shot, click_retrieve_button
 from tools.visualizar_masks import (
     run_masks_window,
     update_level_display,
@@ -119,6 +119,58 @@ def make_progress_bar(prefix: str = "  Simulando", width: int = 28):
         sys.stdout.flush()
 
     return report
+
+
+def aguardar_fim_da_rodada(dry_run: bool = False):
+    """
+    Espera a jogada terminar olhando o botão retrieve (retângulo roxo): enquanto
+    ele está na tela as bolas ainda estão voando; quando some, a rodada acabou.
+
+    Se o botão continuar na tela por mais de cfg.TEMPO_MAX_RODADA, as bolas
+    provavelmente estão num loop quase horizontal — clica nele pra recolher as
+    bolas e forçar o fim da rodada. Se o clique não resolver, tenta de novo a
+    cada RECLIQUE_S, até MAX_CLIQUES; depois disso desiste e segue (o scan do
+    próximo turno lida com o que estiver na tela).
+    """
+    POLL_S = 0.3  # intervalo entre checagens
+    APARECER_S = 5.0  # quanto esperar o botão surgir depois do disparo
+    RECLIQUE_S = 5.0  # intervalo entre cliques se o primeiro não encerrar
+    MAX_CLIQUES = 3
+
+    print("  Aguardando fim da rodada...")
+    t0 = time.monotonic()
+
+    # 1. O botão leva um instante pra aparecer depois do disparo. Sem essa
+    #    espera, a primeira checagem veria "sem botão" e daria a rodada por
+    #    encerrada antes dela começar.
+    while not detect_retrieve_button():
+        if time.monotonic() - t0 > APARECER_S:
+            print("  [!] Botao retrieve nao apareceu — seguindo")
+            return
+        time.sleep(POLL_S)
+
+    # 2. Espera o botão sumir, com limite de TEMPO_MAX_RODADA.
+    cliques = 0
+    proximo_clique = t0 + cfg.TEMPO_MAX_RODADA
+    while detect_retrieve_button():
+        agora = time.monotonic()
+        if agora >= proximo_clique:
+            if cliques >= MAX_CLIQUES:
+                print(
+                    f"  [!] Botao retrieve continua na tela apos {cliques} cliques — seguindo"
+                )
+                return
+            cliques += 1
+            print(
+                f"  [!] Rodada passou de {cfg.TEMPO_MAX_RODADA:.0f}s — "
+                f"clicando no retrieve pra forcar o fim ({cliques}/{MAX_CLIQUES})"
+            )
+            if not dry_run:
+                click_retrieve_button()
+            proximo_clique = agora + RECLIQUE_S
+        time.sleep(POLL_S)
+
+    print(f"  Rodada encerrada ({time.monotonic() - t0:.1f}s)")
 
 
 def run_turn(
@@ -346,18 +398,11 @@ def main():
                         pyautogui.click(1580, 961)
                     stale_turns = 0
 
-                # Aguarda fim da rodada (polling visual das 4 regiões rosa)
-                print("  Aguardando fim da rodada...")
-                timeout = 30.0
-                elapsed = 0.0
-                while elapsed < timeout:
-                    if detect_round_end():
-                        print("  Rodada encerrada detectada!")
-                        break
-                    time.sleep(0.3)
-                    elapsed += 0.3
-                else:
-                    print("  [!] Timeout esperando fim da rodada")
+                # Aguarda fim da rodada pelo botão retrieve (com limite de
+                # TEMPO_MAX_RODADA). antigo: polling das 4 regiões rosa
+                # (detect_round_end) com timeout fixo de 30s, que seguia pro
+                # próximo turno com as bolas ainda voando.
+                aguardar_fim_da_rodada(dry_run=args.dry_run)
 
                 # Espera os blocos descerem e estabilizarem
                 time.sleep(2.0)

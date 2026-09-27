@@ -122,6 +122,22 @@ ROUND_END_REGIONS = [
 ROUND_END_HSV_LOW = np.array([163, 150, 180])
 ROUND_END_HSV_HIGH = np.array([177, 255, 255])
 
+# Botão "retrieve" (recolher bolas) — retângulo roxo (#7921dc) que fica na tela
+# ENQUANTO a jogada está acontecendo. Presente = rodada em andamento; sumiu =
+# pode começar a pensar na próxima. Coordenadas absolutas na tela (x, y, w, h).
+RETRIEVE_BUTTON_REGION = (1485, 947, 185, 38)
+# #7921dc → RGB(121,33,220) → OpenCV HSV: H≈134, S≈217, V≈220
+RETRIEVE_HSV_LOW = np.array([129, 170, 170])
+RETRIEVE_HSV_HIGH = np.array([139, 255, 255])
+# Fração mínima da região que precisa estar roxa pra contar como "botão presente".
+# Sem o botão (ícones da loja no lugar) a máscara mede 0%.
+RETRIEVE_MIN_FILL = 0.30
+
+# Tempo máximo (s) de uma rodada. Se o botão retrieve continuar na tela por mais
+# que isso, as bolas provavelmente estão num loop quase horizontal — o bot clica
+# no botão pra forçar o fim da rodada.
+TEMPO_MAX_RODADA = 120.0
+
 # ─────────────────────────────────────────────
 # DETECÇÃO DE BLOCOS
 # ─────────────────────────────────────────────
