@@ -1578,6 +1578,19 @@ def detect_round_end() -> bool:
     return hits >= 2
 
 
+def detect_retrieve_button() -> bool:
+    """
+    True se o botão retrieve (retângulo roxo) está na tela — ou seja, a última
+    jogada ainda está acontecendo.
+    """
+    rx, ry, rw, rh = cfg.RETRIEVE_BUTTON_REGION
+    mon = {"top": ry, "left": rx, "width": rw, "height": rh}
+    img = np.array(_sct.grab(mon), dtype=np.uint8)[:, :, :3]
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    mask = cv2.inRange(hsv, cfg.RETRIEVE_HSV_LOW, cfg.RETRIEVE_HSV_HIGH)
+    return np.count_nonzero(mask) >= mask.size * cfg.RETRIEVE_MIN_FILL
+
+
 # ─────────────────────────────────────────────
 # DETECÇÃO DE GAME OVER (tela branca)
 # ─────────────────────────────────────────────
