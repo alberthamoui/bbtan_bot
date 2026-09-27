@@ -257,10 +257,10 @@ def run_turn(
     else:
         print(f"  >> [DRY RUN] Tiro em {best.angle:.1f}° (nao executado)")
 
-    block_fingerprint = frozenset(
-        (b.row_index, round(b.cx / cfg.BLOCK_SIZE)) for b in state.blocks
-    )
-    return block_fingerprint
+    # antigo: retornava um fingerprint das posicoes dos blocos, usado pela
+    # deteccao de "jogo travado" (mesmo tabuleiro por 20 turnos). Removida: o
+    # unico criterio pra forcar o fim de uma rodada agora e TEMPO_MAX_RODADA.
+    return True
 
 
 def main():
@@ -319,9 +319,6 @@ def main():
     turn = 0
     consecutive_fails = 0
     max_fails = 5
-    last_block_fingerprint = None
-    stale_turns = 0
-    max_stale_turns = 20
 
     try:
         while True:
@@ -373,33 +370,16 @@ def main():
 
                 turn = 0
                 consecutive_fails = 0
-                last_block_fingerprint = None
-                stale_turns = 0
                 print("\n  Recomecando do zero!\n")
                 continue
 
             if status:
                 consecutive_fails = 0
 
-                # Detecta jogo travado (blocos na mesma posicao por N turnos)
-                if status == last_block_fingerprint:
-                    stale_turns += 1
-                else:
-                    stale_turns = 0
-                    last_block_fingerprint = status
-
-                if stale_turns >= max_stale_turns:
-                    print(
-                        f"\n  [!] Blocos na mesma posicao por {max_stale_turns} turnos — clicando para destravar bolas"
-                    )
-                    if not args.dry_run:
-                        import pyautogui
-
-                        pyautogui.click(1580, 961)
-                    stale_turns = 0
-
                 # Aguarda fim da rodada pelo botão retrieve (com limite de
-                # TEMPO_MAX_RODADA). antigo: polling das 4 regiões rosa
+                # TEMPO_MAX_RODADA — unico criterio pra forcar o fim; a antiga
+                # deteccao de "mesmo tabuleiro por 20 turnos" foi removida).
+                # antigo: polling das 4 regiões rosa
                 # (detect_round_end) com timeout fixo de 30s, que seguia pro
                 # próximo turno com as bolas ainda voando.
                 aguardar_fim_da_rodada(dry_run=args.dry_run)

@@ -132,6 +132,9 @@ RETRIEVE_HSV_HIGH = np.array([139, 255, 255])
 # Fração mínima da região que precisa estar roxa pra contar como "botão presente".
 # Sem o botão (ícones da loja no lugar) a máscara mede 0%.
 RETRIEVE_MIN_FILL = 0.30
+# Ponto (absoluto na tela) clicado pra forçar o fim da rodada — dentro do botão.
+# Era o clique hardcoded da antiga detecção de "jogo travado" em main.py.
+RETRIEVE_CLICK = (1580, 961)
 
 # Tempo máximo (s) de uma rodada. Se o botão retrieve continuar na tela por mais
 # que isso, as bolas provavelmente estão num loop quase horizontal — o bot clica

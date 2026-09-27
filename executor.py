@@ -82,9 +82,9 @@ def speed_up_click():
 
 
 def click_retrieve_button():
-    """Clica no centro do botão retrieve pra recolher as bolas e encerrar a rodada."""
-    rx, ry, rw, rh = cfg.RETRIEVE_BUTTON_REGION
-    pyautogui.click(rx + rw // 2, ry + rh // 2)
+    """Clica no botão retrieve pra recolher as bolas e encerrar a rodada."""
+    # antigo: centro de RETRIEVE_BUTTON_REGION (1577, 966)
+    pyautogui.click(*cfg.RETRIEVE_CLICK)
 
 
 # Alias padrão — troque conforme o que funcionar no seu emulador
