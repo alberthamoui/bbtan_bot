@@ -26,3 +26,6 @@ tools/screenshot.png
 
 # Notebooks (scratch)
 tools/test.ipynb
+
+# Prints com o caminho ideal gerados por desenhar_caminho.py
+prints/
