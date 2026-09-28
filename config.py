@@ -14,34 +14,76 @@ import numpy as np
 # antigo: (1353, 245, 451, 577)
 GAME_REGION = (1352, 244, 452, 578)
 
+# ─────────────────────────────────────────────
+# ESCALA — todos os valores em pixel deste arquivo foram medidos com o jogo em
+# REF_LARGURA px de largura (perfil de referência). O BBTAN escala por igual, então
+# se o jogo tiver outro tamanho basta multiplicar: comprimentos por ESCALA
+# (px) e áreas por ESCALA² (area_px). Com ESCALA = 1 tudo fica como medido.
+# ─────────────────────────────────────────────
+REF_LARGURA = 452
+ESCALA = GAME_REGION[2] / REF_LARGURA
+
+
+def px(valor: float) -> int:
+    """Comprimento medido no perfil de referência -> px no tamanho atual do jogo."""
+    return int(round(valor * ESCALA))
+
+
+def area_px(valor: float) -> float:
+    """Área (px²) medida no perfil de referência -> px² no tamanho atual do jogo."""
+    return valor * ESCALA * ESCALA
+
+
+def regiao_hud(dx: float, dy: float, w: float, h: float) -> tuple:
+    """
+    Região do HUD (fora do tabuleiro) -> (x, y, w, h) absoluto na tela.
+    dx/dy são medidos a partir do canto superior esquerdo do GAME_REGION, no
+    perfil de referência — assim o HUD acompanha o jogo quando a janela muda
+    de lugar ou de tamanho.
+    """
+    return (GAME_REGION[0] + px(dx), GAME_REGION[1] + px(dy), px(w), px(h))
+
+
+def ponto_hud(dx: float, dy: float) -> tuple:
+    """Ponto do HUD relativo ao canto do GAME_REGION -> (x, y) absoluto na tela."""
+    return (GAME_REGION[0] + px(dx), GAME_REGION[1] + px(dy))
+
+
 # Margens internas da área jogável (pixels relativos à GAME_REGION)
 # antigo: WALL_LEFT = 5
-WALL_LEFT = 0
+WALL_LEFT = px(0)
 # antigo: WALL_RIGHT = GAME_REGION[2] - 5  (=446)
-WALL_RIGHT = 449
+# antigo: WALL_RIGHT = 449
+WALL_RIGHT = px(449)
 # antigo: WALL_TOP = 5
-WALL_TOP = 2
+# antigo: WALL_TOP = 2
+WALL_TOP = px(2)
 # antigo: WALL_BOTTOM = GAME_REGION[3] - 10  (=567)  # acima do robô/bola
-WALL_BOTTOM = 575
+# antigo: WALL_BOTTOM = 575
+WALL_BOTTOM = px(575)
 
 # Grid do BBTAN: 7 colunas
 GRID_COLUMNS = 7
 BLOCK_SIZE = GAME_REGION[2] // GRID_COLUMNS  # pixels por bloco
 
 # Limites calibrados de cada coluna (via calibrate_columns.py)
-COL_LEFTS = [4, 67, 132, 195, 258, 321, 386]
-COL_RIGHTS = [63, 128, 191, 255, 318, 382, 444]
+# antigo: COL_LEFTS = [4, 67, 132, 195, 258, 321, 386]
+# antigo: COL_RIGHTS = [63, 128, 191, 255, 318, 382, 444]
+COL_LEFTS = [px(x) for x in (4, 67, 132, 195, 258, 321, 386)]
+COL_RIGHTS = [px(x) for x in (63, 128, 191, 255, 318, 382, 444)]
 
 # Limites de cada fileira, relativos ao frame capturado (0 = mais baixa/perigosa)
 # Computados a partir de _GRID_TOP_Y e BLOCK_SIZE para cobertura contígua (sem gaps)
-_GRID_TOP_Y = 67  # Y do topo da fileira mais alta (calibrar se mudar GAME_REGION)
+# antigo: _GRID_TOP_Y = 67
+_GRID_TOP_Y = px(67)  # Y do topo da fileira mais alta
 LEVEL_TOPS = [_GRID_TOP_Y + (6 - i) * BLOCK_SIZE for i in range(7)]
 LEVEL_BOTS = [_GRID_TOP_Y + (7 - i) * BLOCK_SIZE - 1 for i in range(7)]
 # antigo: LEVEL_BOTS[0] = 514 (=_GRID_TOP_Y + 7*BLOCK_SIZE - 1). Cortava 1px
 # do bloco da fileira mais baixa; ajustado pra bater exato com a base do bloco.
 # antigo (tentativa anterior): LEVEL_BOTS[0] = WALL_BOTTOM = 575, mas esticava
 # a fileira ate a base do playfield e fazia o codigo detectar o player como bloco.
-LEVEL_BOTS[0] = 513
+# antigo: LEVEL_BOTS[0] = 513
+LEVEL_BOTS[0] = px(513)
 # Centro Y de cada fileira. Derivado — consumido apenas por tools/ (calibrate_levels,
 # visualizar_masks). O bot em si usa LEVEL_TOPS/LEVEL_BOTS via vision._get_row_index.
 LEVELS = [(t + b) // 2 for t, b in zip(LEVEL_TOPS, LEVEL_BOTS)]
@@ -103,20 +145,24 @@ HP_TEXT_HSV_HIGH = np.array([179, 255, 130])
 BALL_HSV_LOW = np.array([0, 0, 200])
 BALL_HSV_HIGH = np.array([179, 40, 255])
 
-# Contagem de bolas (OCR) — região absoluta na tela onde aparece "x14", "x1", etc.
+# Contagem de bolas (OCR) — região na tela onde aparece "x14", "x1", etc.
+# As regiões/pontos do HUD abaixo são relativos ao canto do GAME_REGION (regiao_hud).
 # antigo: (1324, 829, 483, 36)
-BALL_COUNT_REGION = (1308, 824, 536, 33)
+# antigo (absoluto): BALL_COUNT_REGION = (1308, 824, 536, 33)
+BALL_COUNT_REGION = regiao_hud(-44, 580, 536, 33)
 # antigo: [0, 0, 200] / [179, 41, 255]
 BALL_COUNT_HSV_LOW = np.array([0, 0, 140])
 BALL_COUNT_HSV_HIGH = np.array([179, 50, 255])
 
 # Indicador de fim de rodada — 4 regiões absolutas na tela com cor rosa (#e53572)
 # Quando as 4 regiões contêm essa cor, a rodada acabou e o jogo pode ser analisado
+# antigo (absoluto): (1445, 920, 22, 29), (1544, 919, 25, 30),
+#                    (1649, 922, 22, 28), (1748, 919, 27, 32)
 ROUND_END_REGIONS = [
-    (1445, 920, 22, 29),
-    (1544, 919, 25, 30),
-    (1649, 922, 22, 28),
-    (1748, 919, 27, 32),
+    regiao_hud(93, 676, 22, 29),
+    regiao_hud(192, 675, 25, 30),
+    regiao_hud(297, 678, 22, 28),
+    regiao_hud(396, 675, 27, 32),
 ]
 # #e53572 → RGB(229,53,114) → OpenCV HSV: H≈170, S≈196, V≈229
 ROUND_END_HSV_LOW = np.array([163, 150, 180])
@@ -124,17 +170,19 @@ ROUND_END_HSV_HIGH = np.array([177, 255, 255])
 
 # Botão "retrieve" (recolher bolas) — retângulo roxo (#7921dc) que fica na tela
 # ENQUANTO a jogada está acontecendo. Presente = rodada em andamento; sumiu =
-# pode começar a pensar na próxima. Coordenadas absolutas na tela (x, y, w, h).
-RETRIEVE_BUTTON_REGION = (1485, 947, 185, 38)
+# pode começar a pensar na próxima. Região na tela (x, y, w, h).
+# antigo (absoluto): RETRIEVE_BUTTON_REGION = (1485, 947, 185, 38)
+RETRIEVE_BUTTON_REGION = regiao_hud(133, 703, 185, 38)
 # #7921dc → RGB(121,33,220) → OpenCV HSV: H≈134, S≈217, V≈220
 RETRIEVE_HSV_LOW = np.array([129, 170, 170])
 RETRIEVE_HSV_HIGH = np.array([139, 255, 255])
 # Fração mínima da região que precisa estar roxa pra contar como "botão presente".
 # Sem o botão (ícones da loja no lugar) a máscara mede 0%.
 RETRIEVE_MIN_FILL = 0.30
-# Ponto (absoluto na tela) clicado pra forçar o fim da rodada — dentro do botão.
+# Ponto clicado pra forçar o fim da rodada — dentro do botão.
 # Era o clique hardcoded da antiga detecção de "jogo travado" em main.py.
-RETRIEVE_CLICK = (1580, 961)
+# antigo (absoluto): RETRIEVE_CLICK = (1580, 961)
+RETRIEVE_CLICK = ponto_hud(228, 717)
 
 # Tempo máximo (s) de uma rodada. Se o botão retrieve continuar na tela por mais
 # que isso, as bolas provavelmente estão num loop quase horizontal — o bot clica
@@ -153,6 +201,17 @@ MAX_BLOCK_AREA = int(
 )  # bloco grande 2x2 (4x) + margem morfológica
 POLY_APPROX_FACTOR = 0.04  # fator do approxPolyDP
 
+# Limiares em pixel que antes estavam chumbados em vision.py (valores do perfil
+# de referência; comprimentos passam por px, áreas por area_px).
+MIN_BLOCK_SIDE = px(35)  # bbox menor que isso é power-up, não bloco
+BLOCK_EDGE_MARGIN = px(3)  # recuo da bbox ao mapear bloco -> célula da grade
+MIN_POWERUP_AREA = area_px(50)
+MIN_BALL_AREA = area_px(20)  # bola parada: área do contorno branco
+MAX_BALL_AREA = area_px(500)
+MIN_HP_DIGIT_AREA_2X2 = area_px(50)  # dígito de HP em bloco 2x2
+MIN_BALL_COUNT_DIGIT_AREA = area_px(15)  # dígito do contador "x14"
+MIN_BALL_COUNT_DIGIT_H = px(6)
+
 
 # ─────────────────────────────────────────────
 # SIMULAÇÃO DE FÍSICA
@@ -166,7 +225,8 @@ POLY_APPROX_FACTOR = 0.04  # fator do approxPolyDP
 # BALL_RADIUS = max(3, int(BLOCK_SIZE * 0.50))  # antigo: raio 4mm
 # BALL_RADIUS = max(3, int(BLOCK_SIZE * 0.40))
 # BALL_RADIUS = max(3, int(BLOCK_SIZE * 0.22))
-BALL_RADIUS = 9
+# antigo: BALL_RADIUS = 9
+BALL_RADIUS = px(9)
 
 # DECORATIVO — não tem efeito nenhum na simulação. physics._sim_one_ball faz
 # `vel.normalized() * BALL_SPEED` e depois avança `vel * (SIM_STEP_SIZE / BALL_SPEED)`:
@@ -183,9 +243,13 @@ BALL_SPEED = 8.0
 # 573px de altura (2×573/sin(19°) = 3520px para subir e voltar), todo ângulo
 # abaixo de ~57° era truncado no meio do voo.
 # Agora o orçamento é declarado e o nº de steps é derivado dele.
-SIM_PATH_BUDGET = 4000.0  # px de percurso que a bola pode percorrer por voo
-SIM_STEP_SIZE = 1.0  # antigo: 0.5 (2.7x mais lento); antes disso: 2.0
-MAX_SIM_STEPS = int(SIM_PATH_BUDGET / SIM_STEP_SIZE)
+# Os dois escalam juntos: o voo cobre a mesma fração do tabuleiro e o nº de steps
+# (custo da simulação) não muda com o tamanho do jogo.
+# antigo: SIM_PATH_BUDGET = 4000.0
+SIM_PATH_BUDGET = 4000.0 * ESCALA  # px de percurso que a bola pode percorrer por voo
+# antigo: SIM_STEP_SIZE = 1.0
+SIM_STEP_SIZE = 1.0 * ESCALA  # antigo: 0.5 (2.7x mais lento); antes disso: 2.0
+MAX_SIM_STEPS = round(SIM_PATH_BUDGET / SIM_STEP_SIZE)
 
 # ─────────────────────────────────────────────
 # SCORING — pesos para a decisão de ângulo
@@ -249,16 +313,17 @@ ANGLE_STEP = 1  # resolução da busca (1° = 143 simulações)
 # ─────────────────────────────────────────────
 # EXECUÇÃO / PYAUTOGUI
 # ─────────────────────────────────────────────
-DRAG_DISTANCE = 150  # distância do arrasto em pixels
+# antigo: DRAG_DISTANCE = 150
+DRAG_DISTANCE = px(150)  # distância do arrasto em pixels
 DRAG_DURATION = 0.15  # segundos do gesto de arrasto
 # removido: TURN_WAIT_TIME = 3.5
 #   Era só o default de executor.wait_for_turn_end(), que ninguém chamava — o loop
 #   real espera com polling de vision.detect_round_end(). Removido junto com
 #   wait_for_turn_end/wait_for_turn_end_smart.
 
-# Botão de acelerar (coordenadas absolutas na tela)
-SPEED_UP_X = 1789
-SPEED_UP_Y = 958
+# Botão de acelerar
+# antigo (absoluto): SPEED_UP_X = 1789 / SPEED_UP_Y = 958
+SPEED_UP_X, SPEED_UP_Y = ponto_hud(437, 714)
 SPEED_UP_DELAY = 0.3  # segundos após o disparo para clicar
 
 # ─────────────────────────────────────────────
