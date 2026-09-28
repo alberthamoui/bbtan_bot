@@ -29,3 +29,6 @@ tools/test.ipynb
 
 # Prints com o caminho ideal gerados por desenhar_caminho.py
 prints/
+
+# Gravacoes de tela (o GIF convertido fica em docs/demo.gif)
+*.mp4
