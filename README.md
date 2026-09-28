@@ -2,6 +2,8 @@
 
 Bot que joga BBTAN sozinho num emulador Android no PC.
 
+![Bot jogando BBTAN](docs/demo.gif)
+
 ## Como funciona
 
 ```mermaid
