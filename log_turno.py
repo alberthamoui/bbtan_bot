@@ -470,18 +470,21 @@ def comparar_rastro(state, best, rastro: dict) -> str:
     return "\n".join(linhas)
 
 
-def salvar_contador(turno: int, lido: int) -> None:
+def salvar_contador(turno: int, lido: int, usado: Optional[int] = None) -> None:
     """
     turno_NNN_contador.png: BALL_COUNT_REGION ampliada 3x, com o número que o
-    OCR leu escrito embaixo. Sem isso não dá pra saber, depois, se um "x43"
-    lido como 1 foi erro do OCR ou o contador mostrando outra coisa.
+    OCR leu (e o usado, se o filtro de coerência corrigiu) escrito embaixo. Sem
+    isso não dá pra saber, depois, se um "x43" lido como 1 foi erro do OCR ou o
+    contador mostrando outra coisa. Com o valor usado, as imagens viram um
+    conjunto rotulado pra refazer os templates dos dígitos no tamanho nativo.
     """
     bx, by, bw, bh = cfg.BALL_COUNT_REGION
     with mss.mss() as sct:
         img = np.array(sct.grab({"left": bx, "top": by, "width": bw, "height": bh}), dtype=np.uint8)[:, :, :3]
     img = cv2.resize(img, None, fx=3, fy=3, interpolation=cv2.INTER_NEAREST)
     img = cv2.copyMakeBorder(img, 0, 24, 0, 0, cv2.BORDER_CONSTANT, value=(0, 0, 0))
-    _texto(img, f"T{turno} OCR leu {lido}", (6, img.shape[0] - 7), _BRANCO)
+    rotulo = f"T{turno} OCR leu {lido}" + (f", usado {usado}" if usado is not None and usado != lido else "")
+    _texto(img, rotulo, (6, img.shape[0] - 7), _BRANCO)
     nome = _salvar(f"turno_{turno:03d}_contador.png", img)
     if nome:
         log(f"  imagem: {nome}")

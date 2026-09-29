@@ -133,18 +133,20 @@ def _load_digit_templates():
                 _DIGIT_TEMPLATES[digit] = img
 
 
-def _match_digit(crop: np.ndarray) -> Optional[str]:
-    """Compara um crop binarizado contra todos os templates. Retorna o dígito mais parecido."""
+def _rank_digit(crop: np.ndarray) -> List[Tuple[str, float]]:
+    """
+    Compara um crop binarizado contra todos os templates. Devolve [(dígito, nota)]
+    do mais parecido ao menos parecido (nota = fração de pixels iguais).
+    """
     if not _DIGIT_TEMPLATES:
-        return None
+        return []
     h_norm = _DIGIT_H
     aspect = crop.shape[1] / max(crop.shape[0], 1)
     w_norm = max(1, round(h_norm * aspect))
     resized = cv2.resize(crop, (w_norm, h_norm), interpolation=cv2.INTER_AREA)
     _, binary = cv2.threshold(resized, 127, 255, cv2.THRESH_BINARY)
 
-    best_digit = None
-    best_score = -1
+    notas = []
     for digit, tmpl in _DIGIT_TEMPLATES.items():
         tw = tmpl.shape[1]
         target_w = max(tw, w_norm)
@@ -156,18 +158,85 @@ def _match_digit(crop: np.ndarray) -> Optional[str]:
         pad_tmpl[:, ox_t : ox_t + tw] = tmpl
         match = np.sum(pad_cand == pad_tmpl)
         total = pad_cand.size
-        score = match / total
-        if score > best_score:
-            best_score = score
-            best_digit = digit
-    if best_score < 0.6:
+        notas.append((digit, match / total))
+    notas.sort(key=lambda dn: -dn[1])
+    return notas
+
+
+def _match_digit(crop: np.ndarray) -> Optional[str]:
+    """O dígito mais parecido (ou None abaixo de 0.6). Usado também por tools/calibrate_digits."""
+    notas = _rank_digit(crop)
+    if not notas or notas[0][1] < 0.6:
         return None
-    return best_digit
+    return notas[0][0]
+
+
+# Leituras alternativas do último contador lido: [(valor, nota)], a melhor
+# primeiro, e depois trocando UM dígito pelo 2o candidato dele. O main usa pra
+# escolher um valor coerente com o turno anterior (escolher_contagem).
+CONTADOR_CANDIDATOS: List[Tuple[int, float]] = []
+
+
+# Pares de dígitos que o OCR do contador confunde: vistos ao vivo no logs/bot_1
+# (3/8, 5/6, 1/0, 9/3 na sessão anterior) e no teste simulando dígitos de 13 px.
+_TROCAS_OCR = {frozenset(p) for p in ("38", "56", "10", "93", "86", "32", "89", "17")}
+
+
+def _troca_conhecida(lido: int, minimo: int, maximo: int) -> bool:
+    """True se `lido` é algum valor da faixa com UM dígito trocado por um par de _TROCAS_OCR."""
+    s = str(lido)
+    for v in range(minimo, maximo + 1):
+        t = str(v)
+        if len(t) != len(s):
+            continue
+        dif = [(a, b) for a, b in zip(s, t) if a != b]
+        if len(dif) == 1 and frozenset(dif[0]) in _TROCAS_OCR:
+            return True
+    return False
+
+
+def escolher_contagem(
+    candidatos: List[Tuple[int, float]],
+    minimo: int,
+    maximo: int,
+    esperado: int,
+    fora_anterior: Optional[int] = None,
+) -> Tuple[int, str]:
+    """
+    O número de bolas nunca cai e só sobe com as bolas extras coletadas, então
+    uma leitura fora de [minimo, maximo] é erro de OCR. Devolve (valor, motivo):
+    a melhor leitura dentro da faixa, ou `esperado` se nenhuma couber.
+
+    Saída pra referência errada: se a leitura já tinha caído fora da faixa no
+    turno anterior (`fora_anterior`), repete agora, tem o mesmo número de
+    dígitos que a faixa e NÃO é uma troca conhecida de um dígito de um valor
+    da faixa, quem está errada é a referência — aceita a leitura. As trocas
+    conhecidas (3/8, 5/6...) se repetem enquanto o número não muda, então
+    repetir sozinho não basta; e dígito perdido (43 lido como 1) nunca passa.
+    """
+    lido = candidatos[0][0] if candidatos else None
+    if (
+        lido is not None
+        and fora_anterior is not None
+        and abs(lido - fora_anterior) <= (maximo - minimo) + 1
+        and len(str(lido)) == len(str(minimo))
+        and not _troca_conhecida(lido, minimo, maximo)
+    ):
+        return lido, f"aceitou {lido}: repetiu fora da faixa, a referencia {minimo} estava errada"
+    for valor, _nota in candidatos:
+        if minimo <= valor <= maximo:
+            motivo = "" if valor == lido else f"trocou digito ({lido} -> {valor})"
+            return valor, motivo
+    return esperado, f"leu {lido}, fora de [{minimo}, {maximo}]; usando o esperado {esperado}"
 
 
 def read_ball_count_template() -> int:
-    """Lê o número de bolas via template matching na região BALL_COUNT_REGION."""
+    """
+    Lê o número de bolas na região BALL_COUNT_REGION ("x14" -> 14). Também
+    preenche CONTADOR_CANDIDATOS com as leituras alternativas.
+    """
     _load_digit_templates()
+    CONTADOR_CANDIDATOS.clear()
     if not _DIGIT_TEMPLATES:
         return 0
 
@@ -201,15 +270,20 @@ def read_ball_count_template() -> int:
     if not digit_components:
         return 0
 
-    digits_str = ""
-    for _, crop in digit_components:
-        d = _match_digit(crop)
-        if d is not None:
-            digits_str += d
-
-    if not digits_str:
+    # Mesmo corte de _match_digit: abaixo de 0.6 o componente não conta como dígito
+    ranks = [r for r in (_rank_digit(crop) for _, crop in digit_components) if r and r[0][1] >= 0.6]
+    if not ranks:
         return 0
-    return int(digits_str)
+
+    melhor = "".join(r[0][0] for r in ranks)
+    CONTADOR_CANDIDATOS.append((int(melhor), sum(r[0][1] for r in ranks)))
+    for i, r in enumerate(ranks):
+        if len(r) > 1:
+            alt = melhor[:i] + r[1][0] + melhor[i + 1 :]
+            nota = sum(rr[0][1] for rr in ranks) - r[0][1] + r[1][1]
+            CONTADOR_CANDIDATOS.append((int(alt), nota))
+    CONTADOR_CANDIDATOS[1:] = sorted(CONTADOR_CANDIDATOS[1:], key=lambda vn: -vn[1])
+    return int(melhor)
 
 
 def capture_screen() -> np.ndarray:

@@ -22,7 +22,8 @@ import cv2
 
 import config as cfg
 import log_turno as lt
-from vision import scan_game, detect_retrieve_button, GameState
+import vision
+from vision import scan_game, detect_retrieve_button, GameState, PowerUpType
 from physics import find_best_angle
 from executor import execute_shot, click_retrieve_button
 from tools.visualizar_masks import (
@@ -312,7 +313,9 @@ def main():
     consecutive_fails = 0
     max_fails = 5
     previsao = None  # SimResult do último tiro, conferido no scan seguinte
-    bolas_prev = 0
+    bolas_prev = 0  # bolas do último tiro (0 = sem referência, ex: início/game over)
+    mais_prev = 0  # "+" (bola extra) na tela no último tiro
+    fora_anterior = None  # leitura do contador que caiu fora da faixa no turno anterior
 
     try:
         while True:
@@ -330,9 +333,22 @@ def main():
                 state.debug_frame, state.blocks, state.detected_ball_count
             )
             # antigo: print("  [scan] Estado capturado — display atualizado")
+            lido = state.detected_ball_count
+            correcao = ""
+            if not state.game_over and bolas_prev:
+                # O número de bolas nunca cai e só sobe com os "+" coletados:
+                # fora de [anterior, anterior + "+" que havia na tela] é OCR errado
+                # (no logs/bot_1: 3 lido como 8, 5 como 6, dígitos perdidos).
+                esperado = bolas_prev + (previsao.extra_balls_collected if previsao else 0)
+                state.detected_ball_count, correcao = vision.escolher_contagem(
+                    vision.CONTADOR_CANDIDATOS, bolas_prev, bolas_prev + mais_prev, esperado, fora_anterior
+                )
+            fora_anterior = lido if correcao.startswith("leu ") else None
             lt.log(lt.estado(state))
+            if correcao:
+                lt.log(f"  contador corrigido: {correcao}")
             if not state.game_over:
-                lt.salvar_contador(turn, state.detected_ball_count)
+                lt.salvar_contador(turn, lido, state.detected_ball_count)
                 conf = lt.conferencia(previsao, bolas_prev, state)
                 if conf:
                     lt.log(conf)
@@ -372,6 +388,7 @@ def main():
 
                 turn = 0
                 consecutive_fails = 0
+                bolas_prev = mais_prev = 0  # jogo novo: contador volta a 1
                 lt.log("\n  Recomecando do zero!\n")
                 continue
 
@@ -379,6 +396,9 @@ def main():
                 consecutive_fails = 0
                 previsao = status
                 bolas_prev = max(1, state.detected_ball_count)
+                mais_prev = sum(
+                    1 for p in state.powerups if p.power_up_type == PowerUpType.EXTRA_BALL
+                )
 
                 # Aguarda fim da rodada pelo botão retrieve (com limite de
                 # TEMPO_MAX_RODADA — unico criterio pra forcar o fim; a antiga
