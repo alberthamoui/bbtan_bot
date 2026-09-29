@@ -344,12 +344,27 @@ def main():
                     vision.CONTADOR_CANDIDATOS, bolas_prev, bolas_prev + mais_prev, esperado, fora_anterior
                 )
             fora_anterior = lido if correcao.startswith("leu ") else None
+
+            # A conferência compara com o HP LIDO, então roda antes do ajuste
+            conf = None if state.game_over else lt.conferencia(previsao, bolas_prev, state)
+            ajustes = []
+            if not state.game_over:
+                # HP ilegível (antes virava 1, e "0" fazia a bola atravessar o
+                # bloco) e HP que "subiu" são corrigidos com o turno anterior
+                anterior_hp = {}
+                if previsao is not None:
+                    for r, c, ini, fim in previsao.hp_final:
+                        if r >= 1:
+                            anterior_hp[(r - 1, c)] = (ini, fim)
+                ajustes = vision.ajustar_hp(state.blocks, anterior_hp)
+
             lt.log(lt.estado(state))
             if correcao:
                 lt.log(f"  contador corrigido: {correcao}")
+            for msg in ajustes:
+                lt.log(f"  HP ajustado: {msg}")
             if not state.game_over:
                 lt.salvar_contador(turn, lido, state.detected_ball_count)
-                conf = lt.conferencia(previsao, bolas_prev, state)
                 if conf:
                     lt.log(conf)
             previsao = None

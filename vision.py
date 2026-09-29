@@ -69,6 +69,7 @@ class Block:
     hp_mask: np.ndarray = field(
         default_factory=lambda: np.empty((0, 0), dtype=np.uint8), repr=False
     )  # text_mask de _get_block_text_mask; alimenta a janela 'OCR: HP lido por bloco'
+    hp_estimado: bool = False  # True se ajustar_hp trocou o HP lido por uma estimativa
 
     @property
     def rect(self) -> Tuple[int, int, int, int]:
@@ -484,6 +485,57 @@ def _get_block_text_mask(roi_bgr: np.ndarray, is_triangle: bool = False) -> np.n
     return text_mask
 
 
+# HP que _read_hp devolve quando não conseguiu ler (ou leu "0"). A simulação
+# pula blocos com HP <= 0 — a bola atravessaria um bloco vivo (turno 5 do
+# logs/bot_1) — então ajustar_hp troca isso por uma estimativa antes de simular.
+HP_DESCONHECIDO = 0
+
+
+def ajustar_hp(blocks: List["Block"], anterior: dict) -> List[str]:
+    """
+    Corrige o HP lido usando o turno anterior. `anterior` mapeia a célula NO
+    TABULEIRO ATUAL, (row, col), para (hp_lido_antes, hp_previsto) do bloco que
+    estava uma fileira acima (tudo desce uma fileira por rodada).
+
+      - HP desconhecido: usa o previsto do bloco; se ele é novo (fileira do
+        topo) ou o previsto era 0, usa o maior HP lido no tabuleiro.
+      - HP não sobe: lido acima do que se leu no turno anterior é erro de OCR
+        (no bot_1: 44 lido como 180, 9 como 45) — usa o valor anterior.
+
+    Pode rodar duas vezes: o scan_game chama sem referência (desconhecido vira
+    o maior HP) e o main de novo com `anterior`, que refina os estimados.
+    Marca Block.hp_estimado e devolve uma linha de log por ajuste.
+    """
+    msgs = []
+    nome = lambda b: f"L{7 - b.row_index}C{b.col_index}"
+    # desconhecido = ilegível agora, ou estimado numa passada sem referência
+    desconhecidos = [b for b in blocks if b.hp <= HP_DESCONHECIDO or b.hp_estimado]
+    ids_desc = {id(b) for b in desconhecidos}  # identidade: Block tem arrays numpy, == não serve
+
+    # 1) HP não sobe — antes de calcular o maior, senão uma leitura errada pra
+    #    cima (44 lido como 180) viraria a estimativa dos blocos novos
+    for b in blocks:
+        if id(b) in ids_desc:
+            continue
+        antes = anterior.get((b.row_index, b.col_index))
+        if antes and b.hp > antes[0]:
+            msgs.append(f"{nome(b)}: leu {b.hp}, mas antes era {antes[0]} (HP nao sobe) -> {antes[0]}")
+            b.hp = antes[0]
+            b.hp_estimado = True
+
+    # 2) desconhecidos: previsto do turno anterior, senão o maior HP lido
+    maior = max((b.hp for b in blocks if id(b) not in ids_desc), default=1)
+    for b in desconhecidos:
+        antes = anterior.get((b.row_index, b.col_index))
+        if antes and antes[1] > 0:
+            b.hp, origem = antes[1], "previsto no turno anterior"
+        else:
+            b.hp, origem = maior, "maior HP do tabuleiro"
+        b.hp_estimado = True
+        msgs.append(f"{nome(b)}: HP ilegivel -> {b.hp} ({origem})")
+    return msgs
+
+
 def _read_hp(
     frame_bgr: np.ndarray,
     x: int,
@@ -501,7 +553,10 @@ def _read_hp(
     is_triangle=True propaga pro _get_block_text_mask que dilata o hull
     pra recuperar pixels de texto cortados pela hipotenusa do triângulo.
 
-    Retorna (hp, text_mask). text_mask é sempre retornada (mesmo em falha)
+    Retorna (hp, text_mask). hp = HP_DESCONHECIDO (0) quando a leitura falha
+    (antigo: 1, o que fazia a simulação achar que o bloco morria com um hit);
+    ajustar_hp() troca o desconhecido por uma estimativa depois do scan.
+    text_mask é sempre retornada (mesmo em falha)
     para alimentar a janela 'OCR: HP lido por bloco' — é vazia 0x0 só quando
     a ROI nem chegou a ser processada.
     """
@@ -522,16 +577,16 @@ def _read_hp(
     x2, y2 = x + w - pad_x, y + h - pad_y
 
     if x2 <= x1 or y2 <= y1:
-        return 1, empty
+        return HP_DESCONHECIDO, empty
 
     roi = frame_bgr[y1:y2, x1:x2]
     if roi.size == 0 or roi.shape[0] < 4 or roi.shape[1] < 4:
-        return 1, empty
+        return HP_DESCONHECIDO, empty
 
     text_mask = _get_block_text_mask(roi, is_triangle=is_triangle)
 
     if np.count_nonzero(text_mask) < 5:
-        return 1, text_mask
+        return HP_DESCONHECIDO, text_mask
 
     n_labels, _, stats, _ = cv2.connectedComponentsWithStats(text_mask, connectivity=8)
     if is_2x2:
@@ -546,7 +601,7 @@ def _read_hp(
     # CORREÇÃO 1: Carrega os templates corretos do HP (Pasta: hp_digits)
     _load_hp_digit_templates()
     if not _HP_DIGIT_TEMPLATES:
-        return 1, text_mask
+        return HP_DESCONHECIDO, text_mask
 
     components = []
     for i in range(1, n_labels):
@@ -557,7 +612,7 @@ def _read_hp(
         components.append((cx, crop))
 
     if not components:
-        return 1, text_mask
+        return HP_DESCONHECIDO, text_mask
 
     components.sort(key=lambda c: c[0])
     digits_str = ""
@@ -568,7 +623,8 @@ def _read_hp(
             digits_str += d
 
     if not digits_str:
-        return 1, text_mask
+        return HP_DESCONHECIDO, text_mask
+    # "0" sozinho (ou "00") não é HP de bloco vivo: também vira desconhecido
     return int(digits_str), text_mask
 
 
@@ -1721,6 +1777,10 @@ def scan_game() -> GameState:
         )
 
     blocks = detect_blocks(frame)
+    # Sem referência do turno anterior: HP ilegível vira o maior HP do tabuleiro
+    # (nunca 0, que a simulação trataria como bloco morto). O main refina depois
+    # com o previsto do turno anterior (ajustar_hp com `anterior`).
+    ajustar_hp(blocks, {})
     powerups = detect_powerups(frame)
     ball_pos = detect_ball(frame)
     n_balls = read_ball_count_template()

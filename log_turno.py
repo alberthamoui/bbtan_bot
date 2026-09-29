@@ -154,6 +154,8 @@ def tabuleiro(state) -> str:
             txt += _TRI.get(b.tri_orientation.value, "t?")
         if b.w > cfg.BLOCK_SIZE * 1.5:  # bloco grande 2x2
             txt += "#"
+        if getattr(b, "hp_estimado", False):  # HP ilegível/corrigido (vision.ajustar_hp)
+            txt += "?"
         chave = (b.row_index, b.col_index)
         celulas[chave] = txt if chave not in celulas else celulas[chave] + "|" + txt
     for p in state.powerups:
@@ -169,7 +171,7 @@ def tabuleiro(state) -> str:
         col = _coluna(state.ball_x)
         linhas.append(" " * (7 + col * _LARG + _LARG // 2) + "^ bola")
     linhas.append(
-        "  legenda: HP | tl/tr/bl/br triangulo (canto do corpo) | # bloco 2x2 | "
+        "  legenda: HP (? = estimado) | tl/tr/bl/br triangulo (canto do corpo) | # bloco 2x2 | "
         "+ bola extra | B moeda | LH/LV laser | R direcao aleatoria"
     )
     return "\n".join(linhas)
