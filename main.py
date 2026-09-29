@@ -18,6 +18,8 @@ import argparse
 import sys
 import time
 import threading
+from typing import Optional
+
 import cv2
 
 import config as cfg
@@ -123,7 +125,7 @@ def make_progress_bar(prefix: str = "  Simulando", width: int = 28):
     return report
 
 
-def aguardar_fim_da_rodada(dry_run: bool = False):
+def aguardar_fim_da_rodada(dry_run: bool = False, rastro: Optional[dict] = None):
     """
     Espera a jogada terminar olhando o botão retrieve (retângulo roxo): enquanto
     ele está na tela as bolas ainda estão voando; quando some, a rodada acabou.
@@ -133,11 +135,21 @@ def aguardar_fim_da_rodada(dry_run: bool = False):
     bolas e forçar o fim da rodada. Se o clique não resolver, tenta de novo a
     cada RECLIQUE_S, até MAX_CLIQUES; depois disso desiste e segue (o scan do
     próximo turno lida com o que estiver na tela).
+
+    `rastro` é o resultado de log_turno.capturar_rastro, que já vigiou o botão
+    nos primeiros segundos: se a rodada acabou ali, não há o que esperar; se o
+    botão nem apareceu, espera só mais um pouco (antes eram sempre 5s).
     """
     POLL_S = 0.3  # intervalo entre checagens
     APARECER_S = 5.0  # quanto esperar o botão surgir depois do disparo
     RECLIQUE_S = 5.0  # intervalo entre cliques se o primeiro não encerrar
     MAX_CLIQUES = 3
+
+    if rastro and rastro["rodada_acabou"]:
+        lt.log(f"  rodada encerrada durante a captura ({rastro['segundos']:.1f}s)")
+        return
+    if rastro and not rastro["retrieve_visto"]:
+        APARECER_S = 1.0  # a captura já esperou; o botão devia ter aparecido
 
     lt.log("  aguardando fim da rodada...")
     t0 = time.monotonic()
@@ -147,7 +159,7 @@ def aguardar_fim_da_rodada(dry_run: bool = False):
     #    encerrada antes dela começar.
     while not detect_retrieve_button():
         if time.monotonic() - t0 > APARECER_S:
-            lt.log("  [!] botao retrieve nao apareceu em 5s — seguindo")
+            lt.log(f"  [!] botao retrieve nao apareceu em {APARECER_S:.0f}s — seguindo")
             return
         time.sleep(POLL_S)
 
@@ -235,10 +247,8 @@ def run_turn(
     if not dry_run:
         execute_shot(ball_x, ball_y, best.angle)
         lt.log(f"  >> disparo executado em {best.angle:.0f} graus")
-        # O que aconteceu de verdade: rastro das bolas nos primeiros segundos
-        # de voo, desenhado junto da trajetória prevista (turno_NNN_real.png)
-        rastro = lt.capturar_rastro(state.raw_frame)
-        lt.salvar_real(turno, state, best, rastro)
+        # (a captura do rastro real foi pro loop principal, logo depois daqui,
+        # porque ela também diz se a rodada já acabou)
     else:
         lt.log(f"  >> [DRY RUN] tiro em {best.angle:.0f} graus (nao executado)")
 
@@ -327,7 +337,9 @@ def main():
             lt.log(lt.cabecalho_turno(turn))
 
             # Captura e atualiza a janela "Grid: Blocos por fileira"
-            time.sleep(3)
+            # antigo: time.sleep(3) (+ sleep(2.0) depois da rodada) — 5s fixos
+            espera, parou = vision.esperar_tabuleiro_parado()
+            lt.log(f"  tabuleiro {'parado' if parou else 'ainda mexendo (teto)'} apos {espera:.1f}s")
             state = scan_game()
             update_level_display(
                 state.debug_frame, state.blocks, state.detected_ball_count
@@ -421,10 +433,17 @@ def main():
                 # antigo: polling das 4 regiões rosa
                 # (detect_round_end) com timeout fixo de 30s, que seguia pro
                 # próximo turno com as bolas ainda voando.
-                aguardar_fim_da_rodada(dry_run=args.dry_run)
-
-                # Espera os blocos descerem e estabilizarem
-                time.sleep(2.0)
+                # O que aconteceu de verdade: rastro das bolas logo depois do
+                # disparo (turno_NNN_real.png). A captura também vigia o retrieve
+                # e para quando a rodada acaba, então a espera abaixo só roda se
+                # as bolas ainda estiverem voando.
+                rastro = None
+                if not args.dry_run:
+                    rastro = lt.capturar_rastro(state.raw_frame)
+                    lt.salvar_real(turn, state, status, rastro)
+                aguardar_fim_da_rodada(dry_run=args.dry_run, rastro=rastro)
+                # (a espera dos blocos descerem virou esperar_tabuleiro_parado,
+                # no começo do próximo turno)
             else:
                 consecutive_fails += 1
                 if consecutive_fails >= max_fails:

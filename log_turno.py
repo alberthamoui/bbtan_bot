@@ -32,10 +32,12 @@ import mss
 import numpy as np
 
 import config as cfg
+from vision import detect_retrieve_button
 
 PASTA = Path(__file__).resolve().parent / "logs"
 
-RASTRO_S = 2.5  # segundos de voo capturados depois do disparo
+RASTRO_S = 2.5  # segundos de voo capturados depois do disparo (teto: para antes se a rodada acabar)
+RETRIEVE_CHECK_S = 0.15  # intervalo entre checagens do botão retrieve durante a captura
 # Distância (px de referência) até o caminho previsto pra um pixel do rastro
 # contar como "no previsto". A bola real tem raio ~9px; a folga cobre o erro de
 # posição da detecção e o arredondamento do path (1 ponto a cada 4 steps).
@@ -362,8 +364,14 @@ def capturar_rastro(base_frame: np.ndarray, segundos: float = RASTRO_S) -> dict:
     disparo e acumula onde apareceram pixels de bola (BALL_HSV) que NÃO estavam
     no frame de antes do tiro — o que sobra é o caminho real das bolas.
 
+    Também vigia o botão retrieve (a cada RETRIEVE_CHECK_S): se ele aparece e
+    some, a rodada acabou e a captura para ali. Antes a captura sempre durava
+    RASTRO_S e, com o acelerar ligado, a rodada terminava dentro dela — o main
+    então esperava 5s por um botão que já tinha sumido (todo turno do bot_1).
+
     Devolve {"primeiro": mapa com o índice do 1o frame em que cada pixel acendeu
-    (-1 = nunca), "tempos": instante de cada frame, "frames": quantidade}.
+    (-1 = nunca), "tempos": instante de cada frame, "frames": quantidade,
+    "segundos": duração real, "retrieve_visto", "rodada_acabou": bool}.
     """
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
     base = cv2.inRange(cv2.cvtColor(base_frame, cv2.COLOR_BGR2HSV), cfg.BALL_HSV_LOW, cfg.BALL_HSV_HIGH)
@@ -373,6 +381,8 @@ def capturar_rastro(base_frame: np.ndarray, segundos: float = RASTRO_S) -> dict:
     mon = {"left": rx, "top": ry, "width": rw, "height": rh}
     primeiro = np.full((rh, rw), -1, dtype=np.int32)
     tempos = []
+    visto = acabou = False
+    proxima_checagem = 0.0
     t0 = time.perf_counter()
     with mss.mss() as sct:
         while time.perf_counter() - t0 < segundos:
@@ -383,7 +393,21 @@ def capturar_rastro(base_frame: np.ndarray, segundos: float = RASTRO_S) -> dict:
             novos = (bola > 0) & (primeiro < 0)
             primeiro[novos] = len(tempos)
             tempos.append(time.perf_counter() - t0)
-    return {"primeiro": primeiro, "tempos": tempos, "frames": len(tempos), "segundos": segundos}
+            if tempos[-1] >= proxima_checagem:
+                proxima_checagem = tempos[-1] + RETRIEVE_CHECK_S
+                if detect_retrieve_button():
+                    visto = True
+                elif visto:
+                    acabou = True
+                    break
+    return {
+        "primeiro": primeiro,
+        "tempos": tempos,
+        "frames": len(tempos),
+        "segundos": tempos[-1] if tempos else 0.0,
+        "retrieve_visto": visto,
+        "rodada_acabou": acabou,
+    }
 
 
 # Janela (px de referência a partir da bola) usada pra medir o ângulo de saída:

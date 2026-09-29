@@ -8,6 +8,8 @@ Responsabilidades:
   - Localizar a bola branca na base
 """
 
+import time
+
 import cv2
 import numpy as np
 import mss
@@ -295,6 +297,39 @@ def capture_screen() -> np.ndarray:
     # mss retorna BGRA, converter para BGR
     frame = np.array(raw, dtype=np.uint8)[:, :, :3]
     return frame
+
+
+def esperar_tabuleiro_parado(
+    intervalo: float = 0.2,
+    estaveis: int = 2,
+    teto: float = 4.0,
+    limiar: int = 25,
+    fracao_max: float = 0.003,
+) -> Tuple[float, bool]:
+    """
+    Espera os blocos terminarem de descer depois da rodada: captura a GRADE (o
+    robô embaixo tem animação, fica de fora) a cada `intervalo` e considera
+    parado quando `estaveis` comparações seguidas mudam menos de `fracao_max`
+    dos pixels (diferença > `limiar` em cinza). Desiste em `teto` segundos.
+
+    Substitui os sleeps fixos de 2s + 3s do main (5s todo turno). No pior caso
+    (algo que nunca para de piscar) espera `teto`, menos que antes.
+    Devolve (segundos esperados, parou).
+    """
+    y1, y2 = max(0, cfg.LEVEL_TOPS[-1]), cfg.LEVEL_BOTS[0]
+    t0 = time.monotonic()
+    anterior = None
+    seguidos = 0
+    while time.monotonic() - t0 < teto:
+        cinza = cv2.cvtColor(capture_screen()[y1:y2], cv2.COLOR_BGR2GRAY)
+        if anterior is not None:
+            mudou = np.count_nonzero(cv2.absdiff(cinza, anterior) > limiar) / cinza.size
+            seguidos = seguidos + 1 if mudou < fracao_max else 0
+            if seguidos >= estaveis:
+                return time.monotonic() - t0, True
+        anterior = cinza
+        time.sleep(intervalo)
+    return time.monotonic() - t0, False
 
 
 # ─────────────────────────────────────────────
