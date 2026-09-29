@@ -35,6 +35,9 @@ Antes de rodar, ajuste `GAME_REGION` e as coordenadas em `config.py` para a sua 
 python tools/calibrate.py region
 ```
 
+Para conferir, `python imagem.py` tira um print com tudo que o `config.py` marca
+(tabuleiro, grade, HUD) desenhado por cima, e diz qual variável ajustar onde não bater.
+
 ## Uso
 
 ```bash
