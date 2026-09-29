@@ -143,6 +143,11 @@ _shared_gate2x2 = []  # snapshot de vision.GATE_2X2_DIAG do último scan
 _shared_best = None  # SimResult do ângulo escolhido
 _shared_all_results = []  # SimResult de todos os ângulos
 _shared_ball_xy = None  # (x, y) da bola no frame
+# Frame em que _shared_best foi simulado. Não dá pra usar _shared_debug_frame:
+# o loop atualiza ele com o scan do turno NOVO antes de terminar a simulação, e
+# por ~2s a trajetória do turno anterior aparecia atravessando os blocos que
+# desceram uma fileira.
+_shared_shot_frame = None
 
 
 def update_level_display(debug_frame, blocks, ball_count):
@@ -158,16 +163,20 @@ def update_level_display(debug_frame, blocks, ball_count):
     _shared_gate2x2 = list(GATE_2X2_DIAG)
 
 
-def update_shot_display(best, all_results, ball_xy):
+def update_shot_display(best, all_results, ball_xy, frame):
     """
     Chamado pelo loop principal após find_best_angle. Alimenta os painéis
     trajetoria e angulos. Só guarda referências — é barato o bastante pra
     rodar todo turno, mesmo com os painéis desligados.
+
+    `frame` é o debug_frame do scan que foi simulado: os dois painéis desenham
+    sobre ele, então trajetória e tabuleiro são sempre do mesmo turno.
     """
-    global _shared_best, _shared_all_results, _shared_ball_xy
+    global _shared_best, _shared_all_results, _shared_ball_xy, _shared_shot_frame
     _shared_best = best
     _shared_all_results = all_results
     _shared_ball_xy = ball_xy
+    _shared_shot_frame = frame
 
 
 # ═════════════════════════════════════════════════════════════════════════
@@ -371,18 +380,19 @@ def _painel_powerups(ctx: _Ctx) -> np.ndarray:
 
 def _painel_trajetoria(ctx: _Ctx) -> Optional[np.ndarray]:
     """
-    A trajetória do ângulo escolhido, sobre o frame do último scan.
+    A trajetória do ângulo escolhido, sobre o frame em que ela foi simulada.
 
     Antes isto era uma janela criada pela thread PRINCIPAL sob --debug, o que
     punha duas threads chamando imshow/waitKey — o HighGUI do OpenCV não é
     thread-safe. Como painel, o desenho tem um dono só.
     """
-    if _shared_best is None or _shared_debug_frame is None:
+    # antigo: desenhava sobre _shared_debug_frame (scan mais recente)
+    if _shared_best is None or _shared_shot_frame is None:
         return None
     if not _shared_best.path:
         return None
 
-    vis = _shared_debug_frame.copy()
+    vis = _shared_shot_frame.copy()
     pts = np.array(_shared_best.path, dtype=np.int32).reshape(-1, 1, 2)
     cv2.polylines(vis, [pts], False, (0, 200, 255), 2, cv2.LINE_AA)
 
@@ -419,9 +429,10 @@ def _painel_angulos(ctx: _Ctx) -> Optional[np.ndarray]:
     if not _shared_all_results or _shared_ball_xy is None:
         return None
 
+    # antigo: _shared_debug_frame (scan mais recente, podia ser do turno seguinte)
     fundo = (
-        _shared_debug_frame
-        if _shared_debug_frame is not None
+        _shared_shot_frame
+        if _shared_shot_frame is not None
         else np.zeros((cfg.GAME_REGION[3], cfg.GAME_REGION[2], 3), np.uint8)
     )
     vis = (fundo * 0.35).astype(np.uint8)

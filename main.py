@@ -231,7 +231,7 @@ def run_turn(
         progress_callback=make_progress_bar(),
     )
     sim_time = time.perf_counter() - t0
-    update_shot_display(best, all_results, (ball_x, ball_y))
+    update_shot_display(best, all_results, (ball_x, ball_y), state.debug_frame)
 
     print(f"  Melhor angulo: {best.angle:.1f}°")
     print(
