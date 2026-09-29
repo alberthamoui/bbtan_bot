@@ -354,6 +354,12 @@ def _painel_powerups(ctx: _Ctx) -> np.ndarray:
             (211, 237, 0),
         ),
         ("moeda B", cfg.POWERUP_B_HSV_LOW, cfg.POWERUP_B_HSV_HIGH, (57, 213, 255)),
+        (
+            "direcao aleatoria",
+            cfg.POWERUP_RANDOM_HSV_LOW,
+            cfg.POWERUP_RANDOM_HSV_HIGH,
+            (240, 48, 155),
+        ),
     ]
 
     canvas = np.zeros_like(bgr)
