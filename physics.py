@@ -87,6 +87,11 @@ class SimResult:
     ball_paths: List[List[Tuple[float, float]]] = field(default_factory=list)
     ball_collisions: List[List[Tuple[float, float]]] = field(default_factory=list)
     hit_details: List[str] = field(default_factory=list)
+    # Termos crus do score, pra explicar a nota no log (log_turno.py)
+    terms: ScoreTerms = field(default_factory=ScoreTerms)
+    # (row_index, col_index, hp_inicial, hp_final) de cada bloco ao fim de todas
+    # as bolas — só com record_path. É a previsão que o log confere no turno seguinte.
+    hp_final: List[Tuple[int, int, int, int]] = field(default_factory=list)
 
 
 # ─────────────────────────────────────────────
@@ -583,6 +588,15 @@ def simulate_trajectory(
         collisions=first_collisions if record_path else [],
         ball_paths=ball_paths if record_path else [],
         ball_collisions=ball_collisions if record_path else [],
+        terms=terms,
+        hp_final=(
+            [
+                (b.row_index, b.col_index, b.hp, max(0, block_hp[id(b)]))
+                for b in blocks
+            ]
+            if record_path
+            else []
+        ),
     )
 
 

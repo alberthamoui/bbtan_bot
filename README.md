@@ -75,3 +75,8 @@ python main.py --dry-run    # so visao + simulacao, sem clicar
 ```
 
 Para parar: Ctrl+C, ou mova o mouse para o canto superior esquerdo da tela.
+
+Cada sessao grava em `logs/bot_<data>/` o log do terminal (`sessao.log`) e, por turno,
+a previsao (`turno_NNN_previsto.png`) e o rastro real das bolas sobre ela
+(`turno_NNN_real.png`). No turno seguinte o log confere o tabuleiro previsto com o
+lido e aponta cada diferenca.
