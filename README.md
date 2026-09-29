@@ -29,14 +29,41 @@ As regioes da tela, cores e pesos do score ficam em `config.py`.
 pip install -r requirements.txt
 ```
 
-Antes de rodar, ajuste `GAME_REGION` e as coordenadas em `config.py` para a sua tela:
+## Calibracao
 
-```bash
-python tools/calibrate.py region
-```
+O bot le a tela por posicao, entao o `config.py` precisa saber onde o jogo esta.
+Tudo e relativo ao `GAME_REGION` (o retangulo do tabuleiro): se a janela do
+emulador mudar de lugar, normalmente basta corrigir ele.
 
-Para conferir, `python imagem.py` tira um print com tudo que o `config.py` marca
-(tabuleiro, grade, HUD) desenhado por cima, e diz qual variável ajustar onde não bater.
+1. Descubra o `GAME_REGION`:
+
+   ```bash
+   python tools/calibrate.py region
+   ```
+
+   Arraste um retangulo sobre o tabuleiro e copie o valor impresso para `config.py`.
+   Se o jogo continuar do mesmo tamanho, copie so o `x, y` e mantenha a largura e a altura.
+
+2. Confira o resultado:
+
+   ```bash
+   python imagem.py
+   ```
+
+   Ele tira um print com tudo que o `config.py` marca desenhado por cima do jogo
+   e salva em `prints/`:
+
+   ![Print do imagem.py com as posicoes do config sobre o jogo](docs/calibracao.png)
+
+   Esta certo quando:
+   - o verde (`GAME_REGION`) esta colado na borda do tabuleiro;
+   - a grade ciano/amarela esta nas bordas dos blocos;
+   - o magenta envolve o contador de bolas (`x28`);
+   - o laranja cobre o botao roxo Retrieve, que so aparece com as bolas voando
+     (rode `python imagem.py --delay 3` e dispare);
+   - as cruzes brancas estao no Retrieve e no botao de acelerar.
+
+   Onde nao bater, a legenda a direita diz qual variavel ajustar e com qual ferramenta.
 
 ## Uso
 
