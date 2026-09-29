@@ -184,7 +184,8 @@ def read_ball_count_template() -> int:
     components = []
     for i in range(1, n_labels):
         x, y, w, h, area = stats[i]
-        if area < 15 or h < 6:
+        # antigo: if area < 15 or h < 6
+        if area < cfg.MIN_BALL_COUNT_DIGIT_AREA or h < cfg.MIN_BALL_COUNT_DIGIT_H:
             continue
         crop = mask[y : y + h, x : x + w]
         components.append((x, crop))
@@ -462,7 +463,8 @@ def _read_hp(
         # 2×2: ROI tem ~4x mais pixels que num 1×1, então o min_area
         # proporcional descartava os dígitos "0" e "7" do "107", deixando só
         # o "1". Fixo em 50 (equivalente ao 1×1 normal).
-        min_area = max(3, 50)
+        # antigo: min_area = max(3, 50)
+        min_area = max(3, cfg.MIN_HP_DIGIT_AREA_2X2)
     else:
         min_area = max(3, (x2 - x1) * (y2 - y1) // 100)
 
@@ -748,7 +750,8 @@ def detect_blocks(frame: np.ndarray) -> List[Block]:
 
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    _MARGIN = 3
+    # antigo: _MARGIN = 3
+    _MARGIN = cfg.BLOCK_EDGE_MARGIN
 
     # HP do bloco: leitura direta do número escrito dentro,
     # via template matching contra templates/digits/ (fundo preto, dígito branco).
@@ -766,7 +769,8 @@ def detect_blocks(frame: np.ndarray) -> List[Block]:
         x, y, w, h = cv2.boundingRect(cnt)
 
         # Power-ups são pequenos demais para ser bloco
-        if w < 35 or h < 35:
+        # antigo: if w < 35 or h < 35
+        if w < cfg.MIN_BLOCK_SIDE or h < cfg.MIN_BLOCK_SIDE:
             continue
 
         # DEBUG: rastreia contornos grandes (>= 2 blocos de área)
@@ -1440,7 +1444,8 @@ def detect_powerups(frame: np.ndarray) -> List[PowerUp]:
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         for cnt in contours:
             area = cv2.contourArea(cnt)
-            if area < 50:
+            # antigo: if area < 50
+            if area < cfg.MIN_POWERUP_AREA:
                 continue
             peri = cv2.arcLength(cnt, True)
             if peri == 0:
@@ -1489,7 +1494,8 @@ def detect_ball(frame: np.ndarray) -> Optional[Tuple[float, float]]:
 
     for cnt in contours:
         area = cv2.contourArea(cnt)
-        if area < 20 or area > 500:
+        # antigo: if area < 20 or area > 500
+        if area < cfg.MIN_BALL_AREA or area > cfg.MAX_BALL_AREA:
             continue
 
         peri = cv2.arcLength(cnt, True)
