@@ -384,20 +384,47 @@ def capturar_rastro(base_frame: np.ndarray, segundos: float = RASTRO_S) -> dict:
     return {"primeiro": primeiro, "tempos": tempos, "frames": len(tempos), "segundos": segundos}
 
 
-def _mascara_previsto(best, bx, by, shape) -> np.ndarray:
-    """Máscara com todas as trajetórias previstas (1px), pra medir distância."""
-    m = np.zeros(shape[:2], dtype=np.uint8)
-    for p in _caminhos_unicos(best, limite=None):
-        pts = np.array([(bx, by)] + p, dtype=np.int32).reshape(-1, 1, 2)
-        cv2.polylines(m, [pts], False, 255, 1)
-    return m
+# Janela (px de referência a partir da bola) usada pra medir o ângulo de saída:
+# longe o bastante pra sair de cima da bola/robô, perto o bastante pra ainda ser
+# o 1o segmento do voo (antes da 1a batida).
+ANGULO_RAIO_MIN = cfg.px(60)
+ANGULO_RAIO_MAX = cfg.px(220)
+ANGULO_JANELA = 12  # graus em volta do escolhido que contam como "1o segmento"
+ANGULO_MIN_PIXELS = 30
+
+
+def angulo_saida(rastro_mask: np.ndarray, bx: float, by: float, escolhido: float):
+    """
+    Ângulo real (graus, 0 = direita, 90 = cima) do 1o segmento do voo: mediana
+    do ângulo, visto da bola, dos pixels do rastro entre ANGULO_RAIO_MIN e
+    ANGULO_RAIO_MAX dela e a menos de ANGULO_JANELA graus do escolhido.
+
+    Medido nos 46 turnos do logs/bot_1: desvio de 2,3 graus. Ajustar uma reta
+    (cv2.fitLine, L2 ou Huber) nos mesmos pixels deu desvio de ~31 graus — o
+    trecho é uma faixa curta e grossa de bolas, e a direção fica mal definida.
+    Limitação: se a origem real do disparo não for a bola detectada, a medida
+    carrega esse erro. Devolve (ângulo, n_pixels) ou None.
+    """
+    ys, xs = np.nonzero(rastro_mask)
+    if len(xs) == 0:
+        return None
+    dx, dy = xs - bx, by - ys
+    d = np.hypot(dx, dy)
+    a = np.degrees(np.arctan2(dy, dx))
+    sel = (d > ANGULO_RAIO_MIN) & (d < ANGULO_RAIO_MAX) & (dy > 5) & (np.abs(a - escolhido) < ANGULO_JANELA)
+    if np.count_nonzero(sel) < ANGULO_MIN_PIXELS:
+        return None
+    return float(np.median(a[sel])), int(np.count_nonzero(sel))
 
 
 def comparar_rastro(state, best, rastro: dict) -> str:
     """
     Mede o quanto o voo real bateu com o previsto:
-      - % dos pixels do rastro a menos de RASTRO_TOLERANCIA do caminho previsto;
-      - o primeiro instante em que um grupo de pixels apareceu LONGE do previsto
+      - o ângulo real de saída contra o escolhido (erro de execução do tiro);
+      - % dos pixels do rastro a menos de RASTRO_TOLERANCIA da trajetória da
+        1a bola (antigo: de qualquer um dos caminhos desenhados, o que deixava
+        a conta generosa demais — o turno 13 do bot_1 deu 94% e errou tudo);
+      - o primeiro instante em que um grupo de pixels apareceu LONGE da 1a bola
         (onde a bola real se separou da simulada) e a célula mais perto dali.
     """
     primeiro = rastro["primeiro"]
@@ -406,15 +433,26 @@ def comparar_rastro(state, best, rastro: dict) -> str:
     if rastro["frames"] == 0 or n_aceso == 0:
         return f"  rastro real: nada capturado ({rastro['frames']} frames em {rastro['segundos']:.1f}s)"
 
-    prev = _mascara_previsto(best, state.ball_x, state.ball_y, primeiro.shape)
+    # antigo: _mascara_previsto(best, ...) com todos os caminhos únicos
+    prev = np.zeros(primeiro.shape, dtype=np.uint8)
+    pts = np.array([(state.ball_x, state.ball_y)] + best.path, dtype=np.int32).reshape(-1, 1, 2)
+    cv2.polylines(prev, [pts], False, 255, 1)
     dist = cv2.distanceTransform(cv2.bitwise_not(prev), cv2.DIST_L2, 3)
     fora = aceso & (dist > RASTRO_TOLERANCIA)
     pct = 100.0 * (n_aceso - np.count_nonzero(fora)) / n_aceso
     fps = rastro["frames"] / max(rastro["tempos"][-1], 1e-6)
 
+    medido = angulo_saida(aceso, state.ball_x, state.ball_y, best.angle)
+    if medido:
+        real, n = medido
+        saida = f"angulo real de saida {real:.1f} (escolhido {best.angle:.0f}, erro {real - best.angle:+.1f}, {n}px)"
+    else:
+        saida = "angulo real de saida: sem pixels suficientes"
+
     linhas = [
         f"  rastro real: {rastro['frames']} frames ({fps:.0f} fps) em {rastro['segundos']:.1f}s | "
-        f"{pct:.0f}% do rastro a <= {RASTRO_TOLERANCIA}px do previsto"
+        f"{pct:.0f}% do rastro a <= {RASTRO_TOLERANCIA}px da 1a bola",
+        f"    {saida}",
     ]
     # 1o frame com um grupo relevante de pixels fora do previsto
     MIN_PIXELS = 12
@@ -430,6 +468,23 @@ def comparar_rastro(state, best, rastro: dict) -> str:
     else:
         linhas.append("    sem divergencia relevante: o voo real seguiu o previsto")
     return "\n".join(linhas)
+
+
+def salvar_contador(turno: int, lido: int) -> None:
+    """
+    turno_NNN_contador.png: BALL_COUNT_REGION ampliada 3x, com o número que o
+    OCR leu escrito embaixo. Sem isso não dá pra saber, depois, se um "x43"
+    lido como 1 foi erro do OCR ou o contador mostrando outra coisa.
+    """
+    bx, by, bw, bh = cfg.BALL_COUNT_REGION
+    with mss.mss() as sct:
+        img = np.array(sct.grab({"left": bx, "top": by, "width": bw, "height": bh}), dtype=np.uint8)[:, :, :3]
+    img = cv2.resize(img, None, fx=3, fy=3, interpolation=cv2.INTER_NEAREST)
+    img = cv2.copyMakeBorder(img, 0, 24, 0, 0, cv2.BORDER_CONSTANT, value=(0, 0, 0))
+    _texto(img, f"T{turno} OCR leu {lido}", (6, img.shape[0] - 7), _BRANCO)
+    nome = _salvar(f"turno_{turno:03d}_contador.png", img)
+    if nome:
+        log(f"  imagem: {nome}")
 
 
 def salvar_real(turno: int, state, best, rastro: dict) -> None:
@@ -524,10 +579,13 @@ def conferencia(best_anterior, bolas_anterior: int, state) -> Optional[str]:
         nome = _nome(*cel)
         if cel in antes:
             ini, fim = antes[cel]
-            diferencas.append(
-                f"{nome}: antes {ini}, previa destruir, leu {hp} -> "
-                "fisica superestimou os hits (ou OCR leu HP errado antes)"
+            # antigo: sempre "fisica superestimou os hits (ou OCR leu HP errado antes)"
+            motivo = (
+                "HP subiu: erro de OCR (agora ou no turno anterior)"
+                if hp > ini
+                else "fisica superestimou os hits (ou OCR leu HP errado antes)"
             )
+            diferencas.append(f"{nome}: antes {ini}, previa destruir, leu {hp} -> {motivo}")
         else:
             diferencas.append(
                 f"{nome}: leu {hp} onde antes nao havia bloco -> erro de visao "

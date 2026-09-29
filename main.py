@@ -332,6 +332,7 @@ def main():
             # antigo: print("  [scan] Estado capturado — display atualizado")
             lt.log(lt.estado(state))
             if not state.game_over:
+                lt.salvar_contador(turn, state.detected_ball_count)
                 conf = lt.conferencia(previsao, bolas_prev, state)
                 if conf:
                     lt.log(conf)
