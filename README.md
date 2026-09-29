@@ -16,12 +16,14 @@ flowchart LR
 ```
 
 - **Visao:** isola os blocos por cor (HSV) e contornos, le o HP e o numero de bolas
-  por template matching e localiza a bola e os power-ups.
+  por template matching e localiza a bola e os power-ups. Leituras incoerentes com o
+  turno anterior (numero de bolas que cai, HP que sobe, HP ilegivel) sao corrigidas.
 - **Simulacao:** testa cada angulo de disparo com reflexao em paredes, quadrados e
   triangulos. O score de cada angulo soma hits, blocos destruidos e power-ups, com
   peso maior para as fileiras mais baixas, que sao as mais perigosas.
 - **Disparo:** converte o melhor angulo num swipe no emulador (PyAutoGUI).
-- **Fim da rodada:** espera o botao retrieve sumir da tela; se demorar demais, clica nele.
+- **Fim da rodada:** espera o botao retrieve sumir da tela (se demorar demais, clica nele)
+  e os blocos pararem de descer.
 
 As regioes da tela, cores e pesos do score ficam em `config.py`.
 
@@ -71,12 +73,13 @@ emulador mudar de lugar, normalmente basta corrigir ele.
 
 ```bash
 python main.py              # roda o bot
-python main.py --dry-run    # so visao + simulacao, sem clicar
+python main.py --dry-run    # so visao (janelas de debug), sem simular nem clicar
 ```
 
 Para parar: Ctrl+C, ou mova o mouse para o canto superior esquerdo da tela.
 
-Cada sessao grava em `logs/bot_N/` (bot_1, bot_2, ...) o log do terminal (`sessao.log`) e, por turno,
-a previsao (`turno_NNN_previsto.png`) e o rastro real das bolas sobre ela
-(`turno_NNN_real.png`). No turno seguinte o log confere o tabuleiro previsto com o
-lido e aponta cada diferenca.
+Cada sessao grava em `logs/bot_N/` (bot_1, bot_2, ...) o log do terminal (`sessao.log`) e,
+por turno, a previsao (`turno_NNN_previsto.png`), o rastro real das bolas sobre ela
+(`turno_NNN_real.png`) e o contador de bolas lido (`turno_NNN_contador.png`). O log mede
+o angulo real de cada tiro e, no turno seguinte, confere o tabuleiro previsto com o lido,
+apontando se cada diferenca veio da leitura ou da fisica.
