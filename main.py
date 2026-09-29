@@ -21,6 +21,7 @@ import threading
 import cv2
 
 import config as cfg
+import log_turno as lt
 from vision import scan_game, detect_retrieve_button, GameState
 from physics import find_best_angle
 from executor import execute_shot, click_retrieve_button
@@ -137,7 +138,7 @@ def aguardar_fim_da_rodada(dry_run: bool = False):
     RECLIQUE_S = 5.0  # intervalo entre cliques se o primeiro não encerrar
     MAX_CLIQUES = 3
 
-    print("  Aguardando fim da rodada...")
+    lt.log("  aguardando fim da rodada...")
     t0 = time.monotonic()
 
     # 1. O botão leva um instante pra aparecer depois do disparo. Sem essa
@@ -145,7 +146,7 @@ def aguardar_fim_da_rodada(dry_run: bool = False):
     #    encerrada antes dela começar.
     while not detect_retrieve_button():
         if time.monotonic() - t0 > APARECER_S:
-            print("  [!] Botao retrieve nao apareceu — seguindo")
+            lt.log("  [!] botao retrieve nao apareceu em 5s — seguindo")
             return
         time.sleep(POLL_S)
 
@@ -156,13 +157,13 @@ def aguardar_fim_da_rodada(dry_run: bool = False):
         agora = time.monotonic()
         if agora >= proximo_clique:
             if cliques >= MAX_CLIQUES:
-                print(
-                    f"  [!] Botao retrieve continua na tela apos {cliques} cliques — seguindo"
+                lt.log(
+                    f"  [!] botao retrieve continua na tela apos {cliques} cliques — seguindo"
                 )
                 return
             cliques += 1
-            print(
-                f"  [!] Rodada passou de {cfg.TEMPO_MAX_RODADA:.0f}s — "
+            lt.log(
+                f"  [!] rodada passou de {cfg.TEMPO_MAX_RODADA:.0f}s — "
                 f"clicando no retrieve pra forcar o fim ({cliques}/{MAX_CLIQUES})"
             )
             if not dry_run:
@@ -170,55 +171,41 @@ def aguardar_fim_da_rodada(dry_run: bool = False):
             proximo_clique = agora + RECLIQUE_S
         time.sleep(POLL_S)
 
-    print(f"  Rodada encerrada ({time.monotonic() - t0:.1f}s)")
+    lt.log(f"  rodada encerrada em {time.monotonic() - t0:.1f}s")
 
 
 def run_turn(
     state: GameState,
     debug: bool = False,
     dry_run: bool = False,
+    turno: int = 0,
 ):
     """
     Executa um turno completo a partir de um GameState já capturado.
-    Retorna status: True (sucesso), False (falha), "game_over"
+    Retorna o SimResult do tiro (sucesso — o loop guarda pra conferir a previsão
+    no turno seguinte), False (falha) ou "game_over".
     """
     if state.game_over:
-        print(
-            f"  [GAME OVER] Tela branca detectada ({state.white_ratio:.0%}) — parando bot"
+        lt.log(
+            f"  [GAME OVER] tela branca detectada ({state.white_ratio:.0%}) — parando bot"
         )
         return "game_over"
 
     if state.ball_x is None:
-        print("  [!] Bola nao encontrada — pulando turno")
+        lt.log("  [!] bola nao encontrada — pulando turno")
         return False
 
     if not state.blocks:
-        print("  [!] Nenhum bloco detectado — possivelmente entre turnos")
+        lt.log("  [!] nenhum bloco detectado — possivelmente entre turnos")
         return False
 
     ball_x = state.ball_x
     ball_y = state.ball_y
     ball_count = max(1, state.detected_ball_count)
 
-    print(f"  Bola: ({ball_x:.0f}, {ball_y:.0f})  |  Bolas: {ball_count}")
-    print(f"  Blocos: {len(state.blocks)}  |  Power-ups: {len(state.powerups)}")
-
-    # ── Estado por fileira (Level 1 = topo, Level 7 = fundo/perigo) ──
-    levels_map = {i: [] for i in range(7)}
-    for b in state.blocks:
-        levels_map[b.row_index].append(b)
-
-    for row_idx in range(6, -1, -1):
-        display_level = 7 - row_idx
-        blocks_in_lvl = levels_map[row_idx]
-        if not blocks_in_lvl:
-            continue
-        entries = []
-        for b in blocks_in_lvl:
-            tipo = "Tri" if b.block_type.value == "triangle" else "Bloco"
-            entries.append(f"{tipo} hp={b.hp}")
-        alert = " [!!!] CRITICO" if row_idx == 0 else ""
-        print(f"  Level {display_level}: [{', '.join(entries)}]{alert}")
+    # antigo: prints de bola/blocos e uma linha "Level N: [Bloco hp=..]" por
+    # fileira. Agora o estado vai como grade de texto (log_turno.estado), no
+    # loop principal, antes de chegar aqui.
 
     # ── 2. SIMULAÇÃO ──
     t0 = time.perf_counter()
@@ -233,15 +220,8 @@ def run_turn(
     sim_time = time.perf_counter() - t0
     update_shot_display(best, all_results, (ball_x, ball_y), state.debug_frame)
 
-    print(f"  Melhor angulo: {best.angle:.1f}°")
-    print(
-        f"  Hits ponderados: {best.weighted_hits:.1f}  |  Danger hits: {best.danger_hits}  |  Total hits: {best.total_hits}"
-    )
-    print(
-        f"  Score: {best.score:.0f} (destroyed={best.blocks_destroyed}, "
-        f"powerups={best.powerups_collected}, +balls={best.extra_balls_collected})"
-    )
-    print(f"  Dano por hit: {ball_count}x  |  Simulacao: {sim_time:.2f}s")
+    lt.log(lt.decisao(best, all_results, ball_count, sim_time))
+    lt.salvar_previsto(turno, state, best)
 
     # ── 3. DEBUG VISUAL ──
     # A trajetoria agora e o painel "trajetoria" de visualizar_masks, desenhado
@@ -253,14 +233,19 @@ def run_turn(
     # ── 4. EXECUÇÃO ──
     if not dry_run:
         execute_shot(ball_x, ball_y, best.angle)
-        print("  >> Disparo executado!")
+        lt.log(f"  >> disparo executado em {best.angle:.0f} graus")
+        # O que aconteceu de verdade: rastro das bolas nos primeiros segundos
+        # de voo, desenhado junto da trajetória prevista (turno_NNN_real.png)
+        rastro = lt.capturar_rastro(state.raw_frame)
+        lt.salvar_real(turno, state, best, rastro)
     else:
-        print(f"  >> [DRY RUN] Tiro em {best.angle:.1f}° (nao executado)")
+        lt.log(f"  >> [DRY RUN] tiro em {best.angle:.0f} graus (nao executado)")
 
     # antigo: retornava um fingerprint das posicoes dos blocos, usado pela
     # deteccao de "jogo travado" (mesmo tabuleiro por 20 turnos). Removida: o
     # unico criterio pra forcar o fim de uma rodada agora e TEMPO_MAX_RODADA.
-    return True
+    # antigo: return True
+    return best
 
 
 def main():
@@ -316,9 +301,18 @@ def main():
         print(f"Iniciando em {args.delay:.0f}s — posicione o jogo!")
         time.sleep(args.delay)
 
+    pasta_log = lt.abrir()
+    lt.log(f"log da sessao: {pasta_log}")
+    lt.log(
+        f"GAME_REGION {cfg.GAME_REGION} | ESCALA {cfg.ESCALA:.3f} | "
+        f"angulos {cfg.ANGLE_MIN}-{cfg.ANGLE_MAX} | raio da bola {cfg.BALL_RADIUS}px"
+    )
+
     turn = 0
     consecutive_fails = 0
     max_fails = 5
+    previsao = None  # SimResult do último tiro, conferido no scan seguinte
+    bolas_prev = 0
 
     try:
         while True:
@@ -327,7 +321,7 @@ def main():
                 print(f"\nLimite de {args.max_turns} turnos atingido.")
                 break
 
-            print(f"\n--- Turno {turn} ---")
+            lt.log(lt.cabecalho_turno(turn))
 
             # Captura e atualiza a janela "Grid: Blocos por fileira"
             time.sleep(3)
@@ -335,20 +329,27 @@ def main():
             update_level_display(
                 state.debug_frame, state.blocks, state.detected_ball_count
             )
-            print("  [scan] Estado capturado — display atualizado")
+            # antigo: print("  [scan] Estado capturado — display atualizado")
+            lt.log(lt.estado(state))
+            if not state.game_over:
+                conf = lt.conferencia(previsao, bolas_prev, state)
+                if conf:
+                    lt.log(conf)
+            previsao = None
 
             status = run_turn(
                 state=state,
                 debug=args.debug,
                 dry_run=args.dry_run,
+                turno=turn,
             )
 
             if status == "game_over":
                 turnos_sobrevividos = turn - 1
-                print(f"\n{'='*50}")
-                print(f"  GAME OVER — Score final apos {turnos_sobrevividos} turnos")
-                print(f"  Bolas no ultimo turno: {state.detected_ball_count}")
-                print(f"{'='*50}")
+                lt.log(f"\n{'='*50}")
+                lt.log(f"  GAME OVER — Score final apos {turnos_sobrevividos} turnos")
+                lt.log(f"  Bolas no ultimo turno: {state.detected_ball_count}")
+                lt.log(f"{'='*50}")
 
                 from datetime import datetime
 
@@ -361,7 +362,7 @@ def main():
                     import pyautogui
 
                     for i in range(3):
-                        print(f"  >> Clique restart {i+1}/3...")
+                        lt.log(f"  >> clique restart {i+1}/3...")
                         pyautogui.click(1576, 781)
                         time.sleep(1)
                         pyautogui.click(1584, 838)
@@ -370,11 +371,13 @@ def main():
 
                 turn = 0
                 consecutive_fails = 0
-                print("\n  Recomecando do zero!\n")
+                lt.log("\n  Recomecando do zero!\n")
                 continue
 
             if status:
                 consecutive_fails = 0
+                previsao = status
+                bolas_prev = max(1, state.detected_ball_count)
 
                 # Aguarda fim da rodada pelo botão retrieve (com limite de
                 # TEMPO_MAX_RODADA — unico criterio pra forcar o fim; a antiga
@@ -389,15 +392,15 @@ def main():
             else:
                 consecutive_fails += 1
                 if consecutive_fails >= max_fails:
-                    print(f"\n[!] {max_fails} falhas consecutivas — abortando.")
-                    print(
+                    lt.log(f"\n[!] {max_fails} falhas consecutivas — abortando.")
+                    lt.log(
                         "    Verifique se o jogo esta visivel e a GAME_REGION esta correta."
                     )
                     break
                 time.sleep(1.0)
 
     except KeyboardInterrupt:
-        print("\n\nBot parado pelo usuario (Ctrl+C)")
+        lt.log("\n\nBot parado pelo usuario (Ctrl+C)")
 
     finally:
         masks_stop.set()
@@ -405,8 +408,9 @@ def main():
         if args.debug:
             cv2.destroyAllWindows()
 
-    print(f"\nTotal de turnos jogados: {turn - 1}")
-    print("Ate a proxima!")
+    lt.log(f"\nTotal de turnos jogados: {turn - 1}")
+    lt.log("Ate a proxima!")
+    lt.fechar()
 
 
 if __name__ == "__main__":

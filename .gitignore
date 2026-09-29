@@ -32,3 +32,6 @@ prints/
 
 # Gravacoes de tela (o GIF convertido fica em docs/demo.gif)
 *.mp4
+
+# Logs de sessao do main.py (texto + imagens por turno)
+logs/
