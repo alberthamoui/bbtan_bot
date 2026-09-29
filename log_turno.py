@@ -1,7 +1,7 @@
 """
 log_turno.py — Diagnóstico de cada turno: o que o bot viu, previu e o que aconteceu.
 
-Cada sessão do main.py cria logs/bot_<data>/ com:
+Cada sessão do main.py cria logs/bot_N/ (N = maior número já usado + 1) com:
 
   sessao.log              tudo que passa por log(): também vai pro terminal
   turno_NNN_previsto.png  o scan + a trajetória prevista + o dano previsto por bloco
@@ -57,6 +57,7 @@ _PU = {
     "bonus_b": "B",
     "laser_h": "LH",
     "laser_v": "LV",
+    "random": "R",
     "unknown": "?",
 }
 _LARG = 6  # largura de cada célula da grade
@@ -69,12 +70,29 @@ _BRANCO = (255, 255, 255)
 _AZUL = (255, 160, 0)
 
 
+def _proxima_pasta() -> Path:
+    """
+    logs/bot_N/ com N = maior número já usado + 1 (bot_1 na primeira sessão).
+    Só conta pastas bot_<número>: nomes antigos como bot_20260929_173907 ficam
+    de fora da conta.
+    """
+    usados = [
+        int(p.name[4:])
+        for p in PASTA.glob("bot_*")
+        if p.is_dir() and p.name[4:].isdigit()
+    ]
+    return PASTA / f"bot_{max(usados, default=0) + 1}"
+
+
 def abrir() -> Path:
-    """Cria logs/bot_<data>/ e abre o sessao.log. Devolve a pasta."""
+    """Cria logs/bot_N/ (ver _proxima_pasta) e abre o sessao.log. Devolve a pasta."""
     global _arquivo, _pasta_sessao
-    _pasta_sessao = PASTA / f"bot_{datetime.now():%Y%m%d_%H%M%S}"
-    _pasta_sessao.mkdir(parents=True, exist_ok=True)
+    # antigo: PASTA / f"bot_{datetime.now():%Y%m%d_%H%M%S}"
+    PASTA.mkdir(exist_ok=True)
+    _pasta_sessao = _proxima_pasta()
+    _pasta_sessao.mkdir()
     _arquivo = open(_pasta_sessao / "sessao.log", "a", encoding="utf-8")
+    _arquivo.write(f"sessao iniciada em {datetime.now():%Y-%m-%d %H:%M:%S}\n")
     return _pasta_sessao
 
 
@@ -152,7 +170,7 @@ def tabuleiro(state) -> str:
         linhas.append(" " * (7 + col * _LARG + _LARG // 2) + "^ bola")
     linhas.append(
         "  legenda: HP | tl/tr/bl/br triangulo (canto do corpo) | # bloco 2x2 | "
-        "+ bola extra | B moeda | LH/LV laser"
+        "+ bola extra | B moeda | LH/LV laser | R direcao aleatoria"
     )
     return "\n".join(linhas)
 

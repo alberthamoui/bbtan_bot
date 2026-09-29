@@ -108,6 +108,13 @@ POWERUP_EXTRA_BALL_HSV_HIGH = np.array([91, 255, 255])
 POWERUP_B_HSV_LOW = np.array([20, 180, 200])
 POWERUP_B_HSV_HIGH = np.array([26, 255, 255])
 
+# Power-Up Direção Aleatória (3 setas pra cima) — Roxo
+# Medido no log bot_20260929_173907 (turno 2): H 134-144, S ~215, V 255.
+# Sobrepõe o roxo dos blocos, mas o filtro de raio de detect_powerups
+# (MIN/MAX_POWERUP_RADIUS) descarta qualquer bloco.
+POWERUP_RANDOM_HSV_LOW = np.array([131, 150, 150])
+POWERUP_RANDOM_HSV_HIGH = np.array([145, 255, 255])
+
 
 # --- BLOCOS POR COR (usado para isolar texto de HP via inversão) ---
 
@@ -206,6 +213,9 @@ POLY_APPROX_FACTOR = 0.04  # fator do approxPolyDP
 MIN_BLOCK_SIDE = px(35)  # bbox menor que isso é power-up, não bloco
 BLOCK_EDGE_MARGIN = px(3)  # recuo da bbox ao mapear bloco -> célula da grade
 MIN_POWERUP_AREA = area_px(50)
+# antigo: chumbado em vision.detect_powerups como `radius < 7 or radius > 15`
+MIN_POWERUP_RADIUS = px(7)
+MAX_POWERUP_RADIUS = px(15)
 MIN_BALL_AREA = area_px(20)  # bola parada: área do contorno branco
 MAX_BALL_AREA = area_px(500)
 MIN_HP_DIGIT_AREA_2X2 = area_px(50)  # dígito de HP em bloco 2x2

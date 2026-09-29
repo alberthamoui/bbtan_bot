@@ -34,6 +34,7 @@ class PowerUpType(Enum):
     LASER_H = "laser_h"  # (<>) azul — laser horizontal (ataca linha)
     LASER_V = "laser_v"  # (<>) azul — laser vertical (ataca coluna)
     BONUS_B = "bonus_b"  # (B) amarelo ouro — multiplicador de bônus
+    RANDOM = "random"  # (3 setas) roxo — joga cada bola numa direção aleatória
     UNKNOWN = "unknown"
 
 
@@ -1403,6 +1404,7 @@ _POWERUP_HSV_RANGES = [
     ),
     ("LASER", cfg.POWERUP_LASER_HSV_LOW, cfg.POWERUP_LASER_HSV_HIGH),
     (PowerUpType.BONUS_B, cfg.POWERUP_B_HSV_LOW, cfg.POWERUP_B_HSV_HIGH),
+    (PowerUpType.RANDOM, cfg.POWERUP_RANDOM_HSV_LOW, cfg.POWERUP_RANDOM_HSV_HIGH),
 ]
 
 
@@ -1453,7 +1455,8 @@ def detect_powerups(frame: np.ndarray) -> List[PowerUp]:
             circularity = 4 * np.pi * area / (peri * peri)
             if circularity > 0.6:
                 (cx, cy), radius = cv2.minEnclosingCircle(cnt)
-                if radius < 7 or radius > 15:
+                # antigo: if radius < 7 or radius > 15
+                if radius < cfg.MIN_POWERUP_RADIUS or radius > cfg.MAX_POWERUP_RADIUS:
                     continue
                 if ptype == "LASER":
                     final_type = _detect_laser_orientation(gray, cx, cy, radius)
