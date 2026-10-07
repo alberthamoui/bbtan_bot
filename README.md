@@ -2,6 +2,8 @@
 
 Bot que joga BBTAN sozinho num emulador Android no PC.
 
+![Video de apresentacao do BBTAN Bot](docs/brag_en.gif)
+
 ![Bot jogando BBTAN](docs/demo.gif)
 
 ## Como funciona

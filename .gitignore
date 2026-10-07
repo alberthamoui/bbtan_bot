@@ -6,6 +6,7 @@ bash.exe.stackdump
 historico.txt
 situacao_atual.md
 plano_melhorias.md
+brag-output/
 
 # Python
 __pycache__/
