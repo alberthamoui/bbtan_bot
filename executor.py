@@ -55,16 +55,29 @@ def angle_to_screen_coords(
     return (abs_ball_x, abs_ball_y, target_x, target_y)
 
 
+def _vies(comandado: float) -> float:
+    """Viés (real - comandado) interpolado de cfg.ANGLE_BIAS_TABELA."""
+    tabela = cfg.ANGLE_BIAS_TABELA
+    if comandado <= tabela[0][0]:
+        return tabela[0][1]
+    for (a0, b0), (a1, b1) in zip(tabela, tabela[1:]):
+        if comandado <= a1:
+            return b0 + (b1 - b0) * (comandado - a0) / (a1 - a0)
+    return tabela[-1][1]
+
+
 def angulo_compensado(angle_deg: float) -> float:
     """
-    Ângulo em que mirar pra bola sair em `angle_deg`: desconta o viés medido
-    (cfg.ANGLE_BIAS_DIREITA / ANGLE_BIAS_ESQUERDA). Em 90 graus não mexe.
+    Ângulo em que mirar pra bola sair em `angle_deg`: o comandado c com
+    c + viés(c) = angle_deg. A tabela é por ângulo comandado, então resolve por
+    ponto fixo (c = alvo - viés(c)); 3 passadas bastam, o viés quase não muda
+    em 2 graus.
     """
-    if angle_deg < 90:
-        return angle_deg - cfg.ANGLE_BIAS_DIREITA
-    if angle_deg > 90:
-        return angle_deg - cfg.ANGLE_BIAS_ESQUERDA
-    return angle_deg
+    # antigo: angle_deg - ANGLE_BIAS_DIREITA (< 90) / - ANGLE_BIAS_ESQUERDA (> 90)
+    c = angle_deg
+    for _ in range(3):
+        c = angle_deg - _vies(c)
+    return c
 
 
 def execute_shot_swipe(ball_x: float, ball_y: float, angle_deg: float):

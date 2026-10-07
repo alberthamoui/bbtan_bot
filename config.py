@@ -327,7 +327,7 @@ ANGLE_STEP = 1  # resolução da busca (1° = 143 simulações)
 
 # Escolha robusta: o ângulo vence pela média gaussiana do score dos vizinhos
 # (±ceil(2σ) graus), não pelo pico isolado. σ = erro de execução que sobra depois
-# da compensação de ANGLE_BIAS_* (desvio medido no logs/bot_3: 1,2° direita, 1,5° esquerda).
+# da compensação de ANGLE_BIAS_TABELA (desvio medido no logs/bot_3: 1,2° direita, 1,5° esquerda).
 # antigo: sem suavização (o pico de 1 grau ganhava)
 ANGLE_ROBUSTO_SIGMA = 1.3
 
@@ -338,13 +338,24 @@ ANGLE_ROBUSTO_SIGMA = 1.3
 DRAG_DISTANCE = px(150)  # distância do arrasto em pixels
 DRAG_DURATION = 0.15  # segundos do gesto de arrasto
 
-# Viés do disparo: erro médio (real - escolhido) do "angulo real de saida" nos 90
-# tiros do logs/bot_3. O tiro sai puxado pra vertical: a direita (< 90°) sai
-# +1,6° e a esquerda (> 90°) -0,9°. O executor mira em `ângulo - viés` pra
-# compensar. Se o log da próxima sessão mostrar erro médio longe de 0, reajuste.
+# Viés do disparo: o tiro sai puxado pra vertical (erro do "angulo real de
+# saida" no log). O executor mira num ângulo que desconta esse viés. Se o log da
+# próxima sessão mostrar erro médio longe de 0 numa faixa, reajuste o ponto dela.
 # antigo: sem compensação (0.0 / 0.0)
-ANGLE_BIAS_DIREITA = 1.6
-ANGLE_BIAS_ESQUERDA = -0.9
+# antigo (só logs/bot_3): ANGLE_BIAS_DIREITA = 1.6 / ANGLE_BIAS_ESQUERDA = -0.9
+#   No logs/bot_4 sobrou +0,6° na direita, e na esquerda o viés cresce perto da
+#   horizontal (0 até ~125°, -2° em 161°): uma constante errava pros dois lados.
+# Viés (real - comandado) em função do ângulo COMANDADO, juntando bot_3 e bot_4
+# (180 tiros, desvio ~1,2° por tiro). Interpolado linearmente entre os pontos e
+# constante fora deles; o executor inverte a tabela pra mirar.
+ANGLE_BIAS_TABELA = [
+    (19, 1.9),
+    (89, 1.9),
+    (90, 0.0),
+    (120, 0.0),
+    (145, -1.1),
+    (161, -2.0),
+]
 # removido: TURN_WAIT_TIME = 3.5
 #   Era só o default de executor.wait_for_turn_end(), que ninguém chamava — o loop
 #   real espera com polling de vision.detect_round_end(). Removido junto com

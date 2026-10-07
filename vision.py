@@ -237,6 +237,15 @@ def escolher_contagem(
         if minimo <= valor <= maximo:
             motivo = "" if valor == lido else f"trocou digito ({lido} -> {valor})"
             return valor, motivo
+    # Pouco acima da faixa e sem ser troca conhecida: a referência ficou pra trás
+    # (no logs/bot_4 um contador ilegível fez o bot usar 42 com 43 bolas, e os 44,
+    # 45, 46 lidos certos foram recusados por 4 turnos). antigo: caía no esperado.
+    if (
+        lido is not None
+        and maximo < lido <= maximo + cfg.CONTADOR_FOLGA
+        and not _troca_conhecida(lido, minimo, maximo)
+    ):
+        return lido, f"aceitou {lido}: ate {cfg.CONTADOR_FOLGA} acima de [{minimo}, {maximo}] e nao e troca de digito"
     return esperado, f"leu {lido}, fora de [{minimo}, {maximo}]; usando o esperado {esperado}"
 
 
