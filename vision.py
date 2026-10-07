@@ -186,14 +186,19 @@ _TROCAS_OCR = {frozenset(p) for p in ("38", "56", "10", "93", "86", "32", "89", 
 
 
 def _troca_conhecida(lido: int, minimo: int, maximo: int) -> bool:
-    """True se `lido` é algum valor da faixa com UM dígito trocado por um par de _TROCAS_OCR."""
+    """
+    True se `lido` é algum valor da faixa com dígitos trocados, todos por pares
+    de _TROCAS_OCR. antigo: só UM dígito trocado — no logs/bot_3 o 35 lido como
+    86 (3/8 e 5/6) passou como "referência errada" e o bot jogou 5 turnos com 86 bolas.
+    """
     s = str(lido)
     for v in range(minimo, maximo + 1):
         t = str(v)
         if len(t) != len(s):
             continue
         dif = [(a, b) for a, b in zip(s, t) if a != b]
-        if len(dif) == 1 and frozenset(dif[0]) in _TROCAS_OCR:
+        # antigo: if len(dif) == 1 and frozenset(dif[0]) in _TROCAS_OCR:
+        if dif and all(frozenset(d) in _TROCAS_OCR for d in dif):
             return True
     return False
 
@@ -223,7 +228,9 @@ def escolher_contagem(
         and fora_anterior is not None
         and abs(lido - fora_anterior) <= (maximo - minimo) + 1
         and len(str(lido)) == len(str(minimo))
-        and not _troca_conhecida(lido, minimo, maximo)
+        # antigo: _troca_conhecida(lido, minimo, maximo) — bola extra coletada e
+        # não vista põe o real acima da faixa, então a troca é testada com folga
+        and not _troca_conhecida(lido, minimo, maximo + cfg.CONTADOR_FOLGA)
     ):
         return lido, f"aceitou {lido}: repetiu fora da faixa, a referencia {minimo} estava errada"
     for valor, _nota in candidatos:
@@ -571,6 +578,28 @@ def ajustar_hp(blocks: List["Block"], anterior: dict) -> List[str]:
     return msgs
 
 
+def _na_linha_do_numero(components: list, altura_roi: int) -> list:
+    """
+    Fica só com os componentes na mesma linha do número de HP. O jogo desenha
+    o HP centralizado no bloco: a referência é o componente com o centro
+    vertical mais perto do centro da ROI, e fica quem tem >= 50% da própria
+    altura dentro da faixa vertical dela.
+
+    Tira o contorno do "mini bloco" do canto superior direito do bloco divisor
+    (no logs/bot_3, 102 era lido como 1320/1020 e 32 como 320), que fica acima
+    da linha dos dígitos. Componentes: (x, crop, y, altura).
+    """
+    meio = altura_roi / 2
+    _, _, ry, rh = min(components, key=lambda c: abs(c[2] + c[3] / 2 - meio))
+    linha = []
+    for c in components:
+        _, _, y, h = c
+        sobra = min(y + h, ry + rh) - max(y, ry)
+        if sobra >= 0.5 * h:
+            linha.append(c)
+    return linha
+
+
 def _read_hp(
     frame_bgr: np.ndarray,
     x: int,
@@ -644,14 +673,17 @@ def _read_hp(
         if ca < min_area or ch < 4:
             continue
         crop = text_mask[cy : cy + ch, cx : cx + cw]
-        components.append((cx, crop))
+        components.append((cx, crop, cy, ch))
 
     if not components:
         return HP_DESCONHECIDO, text_mask
 
+    if not is_triangle:
+        components = _na_linha_do_numero(components, text_mask.shape[0])
+
     components.sort(key=lambda c: c[0])
     digits_str = ""
-    for _, crop in components:
+    for _, crop, _, _ in components:
         # CORREÇÃO 2: Usa a função de match correta para o tamanho do HP (20px)
         d = _match_hp_digit(crop)
         if d is not None:

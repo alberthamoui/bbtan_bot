@@ -221,6 +221,11 @@ MAX_BALL_AREA = area_px(500)
 MIN_HP_DIGIT_AREA_2X2 = area_px(50)  # dígito de HP em bloco 2x2
 MIN_BALL_COUNT_DIGIT_AREA = area_px(15)  # dígito do contador "x14"
 MIN_BALL_COUNT_DIGIT_H = px(6)
+# Folga acima da faixa esperada do contador ao checar se uma leitura fora dela
+# é troca conhecida de dígito (vision.escolher_contagem). Bola extra coletada e
+# não detectada põe o real acima de [anterior, anterior + "+"].
+# antigo: sem folga (0)
+CONTADOR_FOLGA = 2
 
 
 # ─────────────────────────────────────────────
@@ -320,12 +325,26 @@ ANGLE_MAX = 161  # simetrico: 180 - 19
 # não acelera nem afina a busca: muda só o texto do console. Ativar fica para depois.
 ANGLE_STEP = 1  # resolução da busca (1° = 143 simulações)
 
+# Escolha robusta: o ângulo vence pela média gaussiana do score dos vizinhos
+# (±ceil(2σ) graus), não pelo pico isolado. σ = erro de execução que sobra depois
+# da compensação de ANGLE_BIAS_* (desvio medido no logs/bot_3: 1,2° direita, 1,5° esquerda).
+# antigo: sem suavização (o pico de 1 grau ganhava)
+ANGLE_ROBUSTO_SIGMA = 1.3
+
 # ─────────────────────────────────────────────
 # EXECUÇÃO / PYAUTOGUI
 # ─────────────────────────────────────────────
 # antigo: DRAG_DISTANCE = 150
 DRAG_DISTANCE = px(150)  # distância do arrasto em pixels
 DRAG_DURATION = 0.15  # segundos do gesto de arrasto
+
+# Viés do disparo: erro médio (real - escolhido) do "angulo real de saida" nos 90
+# tiros do logs/bot_3. O tiro sai puxado pra vertical: a direita (< 90°) sai
+# +1,6° e a esquerda (> 90°) -0,9°. O executor mira em `ângulo - viés` pra
+# compensar. Se o log da próxima sessão mostrar erro médio longe de 0, reajuste.
+# antigo: sem compensação (0.0 / 0.0)
+ANGLE_BIAS_DIREITA = 1.6
+ANGLE_BIAS_ESQUERDA = -0.9
 # removido: TURN_WAIT_TIME = 3.5
 #   Era só o default de executor.wait_for_turn_end(), que ninguém chamava — o loop
 #   real espera com polling de vision.detect_round_end(). Removido junto com

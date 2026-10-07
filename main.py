@@ -27,7 +27,7 @@ import log_turno as lt
 import vision
 from vision import scan_game, detect_retrieve_button, GameState, PowerUpType
 from physics import find_best_angle
-from executor import execute_shot, click_retrieve_button
+from executor import execute_shot, click_retrieve_button, angulo_compensado
 from tools.visualizar_masks import (
     run_masks_window,
     update_level_display,
@@ -246,7 +246,11 @@ def run_turn(
     # ── 4. EXECUÇÃO ──
     if not dry_run:
         execute_shot(ball_x, ball_y, best.angle)
-        lt.log(f"  >> disparo executado em {best.angle:.0f} graus")
+        # antigo: lt.log(f"  >> disparo executado em {best.angle:.0f} graus")
+        lt.log(
+            f"  >> disparo executado em {best.angle:.0f} graus "
+            f"(mirado {angulo_compensado(best.angle):.1f}, compensando o vies)"
+        )
         # (a captura do rastro real foi pro loop principal, logo depois daqui,
         # porque ela também diz se a rodada já acabou)
     else:

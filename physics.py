@@ -92,6 +92,9 @@ class SimResult:
     # (row_index, col_index, hp_inicial, hp_final) de cada bloco ao fim de todas
     # as bolas — só com record_path. É a previsão que o log confere no turno seguinte.
     hp_final: List[Tuple[int, int, int, int]] = field(default_factory=list)
+    # Média gaussiana do score dos ângulos vizinhos (find_best_angle) — o
+    # critério de ordenação, porque o tiro real erra ~1,3 grau.
+    score_robusto: float = 0.0
 
 
 # ─────────────────────────────────────────────
@@ -663,12 +666,17 @@ def find_best_angle(
         if progress_callback is not None:
             progress_callback(i + 1, total_steps)
 
+    _suavizar_scores(all_results)
+
     # Ordenação única por score. Antes havia dois modos: com bloco em row 0-1, o
     # desempate lexicográfico por danger_hits vinha primeiro — o que fazia um tiro
     # que belisca 3x um bloco de 50 HP da fileira crítica vencer um que a destrói e
     # ainda limpa 5 outros. Os ROW_MULTIPLIERS (row0=100x) já codificam esse perigo
     # de forma contínua, então a camada extra era redundante e prejudicial.
-    all_results.sort(key=lambda r: (r.score, r.total_hits), reverse=True)
+    # antigo: all_results.sort(key=lambda r: (r.score, r.total_hits), reverse=True)
+    # O pico isolado perdia o alvo com o erro de execução; agora ganha o ângulo
+    # cuja vizinhança é boa (score_robusto), e o score cru desempata.
+    all_results.sort(key=lambda r: (r.score_robusto, r.score, r.total_hits), reverse=True)
     best = all_results[0]
 
     best_with_path = simulate_trajectory(
@@ -680,7 +688,33 @@ def find_best_angle(
         ball_count=ball_count,
         record_path=True,
     )
+    best_with_path.score_robusto = best.score_robusto
     if progress_callback is not None:
         progress_callback(total_steps, total_steps)
 
     return best_with_path, all_results
+
+
+def _suavizar_scores(results: List[SimResult]) -> None:
+    """
+    Preenche score_robusto de cada resultado (em ordem de ângulo, passo 1) com
+    a média gaussiana (σ = cfg.ANGLE_ROBUSTO_SIGMA) do score dos ângulos a até
+    ceil(2σ) graus. Nas pontas da faixa os pesos são renormalizados só com os
+    vizinhos que existem.
+    """
+    sigma = cfg.ANGLE_ROBUSTO_SIGMA
+    if sigma <= 0:
+        for r in results:
+            r.score_robusto = r.score
+        return
+    raio = math.ceil(2 * sigma)
+    pesos = [math.exp(-(k * k) / (2 * sigma * sigma)) for k in range(-raio, raio + 1)]
+    n = len(results)
+    for i, r in enumerate(results):
+        soma = total = 0.0
+        for k, w in zip(range(-raio, raio + 1), pesos):
+            j = i + k
+            if 0 <= j < n:
+                soma += w * results[j].score
+                total += w
+        r.score_robusto = soma / total
