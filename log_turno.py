@@ -227,24 +227,30 @@ def _explica_score(t) -> str:
 
 def decisao(best, all_results, ball_count: int, sim_time: float) -> str:
     """Melhor ângulo, composição do score, top 5 e dano previsto por bloco."""
-    ranking = sorted(all_results, key=lambda r: (r.score, r.total_hits), reverse=True)
+    # antigo: ranking por (score, total_hits) — o find_best_angle agora ordena
+    # pelo score_robusto (média dos vizinhos), então o log mostra o mesmo critério
+    ranking = sorted(
+        all_results, key=lambda r: (r.score_robusto, r.score, r.total_hits), reverse=True
+    )
     segundo = ranking[1] if len(ranking) > 1 else None
     vantagem = (
-        f" | vantagem sobre o 2o ({segundo.angle:.0f}): {best.score - segundo.score:+.0f}"
+        f" | vantagem sobre o 2o ({segundo.angle:.0f}): {best.score_robusto - segundo.score_robusto:+.0f}"
         if segundo
         else ""
     )
-    empatados = sum(1 for r in all_results if r.score == best.score)
+    empatados = sum(1 for r in all_results if r.score_robusto == best.score_robusto)
 
     linhas = [
         f"  simulacao: {len(all_results)} angulos x {ball_count} bolas em {sim_time:.2f}s",
-        f"  ESCOLHIDO {best.angle:.0f} graus | score {best.score:.0f}{vantagem}"
+        f"  ESCOLHIDO {best.angle:.0f} graus | robusto {best.score_robusto:.0f} "
+        f"(score {best.score:.0f}){vantagem}"
         + (f" | {empatados} angulos empatados" if empatados > 1 else ""),
         f"    score = {_explica_score(best.terms)}",
         f"    total: {best.total_hits} hits ({best.terms.danger_hits} em r0-r1), "
         f"{best.blocks_destroyed} destruidos, {best.powerups_collected} power-ups "
         f"(+{best.extra_balls_collected} bolas)",
-        "  top 5: " + " | ".join(f"{r.angle:.0f}={r.score:.0f}" for r in ranking[:5]),
+        "  top 5 (robusto/score): "
+        + " | ".join(f"{r.angle:.0f}={r.score_robusto:.0f}/{r.score:.0f}" for r in ranking[:5]),
     ]
 
     atingidos = [h for h in best.hp_final if h[3] != h[2]]

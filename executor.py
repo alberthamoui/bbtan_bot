@@ -55,12 +55,25 @@ def angle_to_screen_coords(
     return (abs_ball_x, abs_ball_y, target_x, target_y)
 
 
+def angulo_compensado(angle_deg: float) -> float:
+    """
+    Ângulo em que mirar pra bola sair em `angle_deg`: desconta o viés medido
+    (cfg.ANGLE_BIAS_DIREITA / ANGLE_BIAS_ESQUERDA). Em 90 graus não mexe.
+    """
+    if angle_deg < 90:
+        return angle_deg - cfg.ANGLE_BIAS_DIREITA
+    if angle_deg > 90:
+        return angle_deg - cfg.ANGLE_BIAS_ESQUERDA
+    return angle_deg
+
+
 def execute_shot_swipe(ball_x: float, ball_y: float, angle_deg: float):
     """
     Método 2: Swipe/drag da bola até o ponto alvo.
     Este é o método mais confiável para a maioria dos emuladores.
     """
-    sx, sy, tx, ty = angle_to_screen_coords(ball_x, ball_y, angle_deg)
+    # antigo: angle_to_screen_coords(ball_x, ball_y, angle_deg) — sem compensar o viés
+    sx, sy, tx, ty = angle_to_screen_coords(ball_x, ball_y, angulo_compensado(angle_deg))
 
     # Move para a posição da bola
     pyautogui.moveTo(int(sx), int(sy), duration=0.05)
