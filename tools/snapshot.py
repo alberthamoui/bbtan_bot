@@ -375,6 +375,7 @@ def main():
             hsv, cfg.POWERUP_EXTRA_BALL_HSV_LOW, cfg.POWERUP_EXTRA_BALL_HSV_HIGH
         )
         | cv2.inRange(hsv, cfg.POWERUP_B_HSV_LOW, cfg.POWERUP_B_HSV_HIGH)
+        | cv2.inRange(hsv, cfg.POWERUP_RANDOM_HSV_LOW, cfg.POWERUP_RANDOM_HSV_HIGH)
     )
     mask_ball = cv2.inRange(hsv, cfg.BALL_HSV_LOW, cfg.BALL_HSV_HIGH)
 

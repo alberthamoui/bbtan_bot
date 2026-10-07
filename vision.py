@@ -8,6 +8,8 @@ Responsabilidades:
   - Localizar a bola branca na base
 """
 
+import time
+
 import cv2
 import numpy as np
 import mss
@@ -34,6 +36,7 @@ class PowerUpType(Enum):
     LASER_H = "laser_h"  # (<>) azul — laser horizontal (ataca linha)
     LASER_V = "laser_v"  # (<>) azul — laser vertical (ataca coluna)
     BONUS_B = "bonus_b"  # (B) amarelo ouro — multiplicador de bônus
+    RANDOM = "random"  # (3 setas) roxo — joga cada bola numa direção aleatória
     UNKNOWN = "unknown"
 
 
@@ -68,6 +71,7 @@ class Block:
     hp_mask: np.ndarray = field(
         default_factory=lambda: np.empty((0, 0), dtype=np.uint8), repr=False
     )  # text_mask de _get_block_text_mask; alimenta a janela 'OCR: HP lido por bloco'
+    hp_estimado: bool = False  # True se ajustar_hp trocou o HP lido por uma estimativa
 
     @property
     def rect(self) -> Tuple[int, int, int, int]:
@@ -132,18 +136,20 @@ def _load_digit_templates():
                 _DIGIT_TEMPLATES[digit] = img
 
 
-def _match_digit(crop: np.ndarray) -> Optional[str]:
-    """Compara um crop binarizado contra todos os templates. Retorna o dígito mais parecido."""
+def _rank_digit(crop: np.ndarray) -> List[Tuple[str, float]]:
+    """
+    Compara um crop binarizado contra todos os templates. Devolve [(dígito, nota)]
+    do mais parecido ao menos parecido (nota = fração de pixels iguais).
+    """
     if not _DIGIT_TEMPLATES:
-        return None
+        return []
     h_norm = _DIGIT_H
     aspect = crop.shape[1] / max(crop.shape[0], 1)
     w_norm = max(1, round(h_norm * aspect))
     resized = cv2.resize(crop, (w_norm, h_norm), interpolation=cv2.INTER_AREA)
     _, binary = cv2.threshold(resized, 127, 255, cv2.THRESH_BINARY)
 
-    best_digit = None
-    best_score = -1
+    notas = []
     for digit, tmpl in _DIGIT_TEMPLATES.items():
         tw = tmpl.shape[1]
         target_w = max(tw, w_norm)
@@ -155,18 +161,85 @@ def _match_digit(crop: np.ndarray) -> Optional[str]:
         pad_tmpl[:, ox_t : ox_t + tw] = tmpl
         match = np.sum(pad_cand == pad_tmpl)
         total = pad_cand.size
-        score = match / total
-        if score > best_score:
-            best_score = score
-            best_digit = digit
-    if best_score < 0.6:
+        notas.append((digit, match / total))
+    notas.sort(key=lambda dn: -dn[1])
+    return notas
+
+
+def _match_digit(crop: np.ndarray) -> Optional[str]:
+    """O dígito mais parecido (ou None abaixo de 0.6). Usado também por tools/calibrate_digits."""
+    notas = _rank_digit(crop)
+    if not notas or notas[0][1] < 0.6:
         return None
-    return best_digit
+    return notas[0][0]
+
+
+# Leituras alternativas do último contador lido: [(valor, nota)], a melhor
+# primeiro, e depois trocando UM dígito pelo 2o candidato dele. O main usa pra
+# escolher um valor coerente com o turno anterior (escolher_contagem).
+CONTADOR_CANDIDATOS: List[Tuple[int, float]] = []
+
+
+# Pares de dígitos que o OCR do contador confunde: vistos ao vivo no logs/bot_1
+# (3/8, 5/6, 1/0, 9/3 na sessão anterior) e no teste simulando dígitos de 13 px.
+_TROCAS_OCR = {frozenset(p) for p in ("38", "56", "10", "93", "86", "32", "89", "17")}
+
+
+def _troca_conhecida(lido: int, minimo: int, maximo: int) -> bool:
+    """True se `lido` é algum valor da faixa com UM dígito trocado por um par de _TROCAS_OCR."""
+    s = str(lido)
+    for v in range(minimo, maximo + 1):
+        t = str(v)
+        if len(t) != len(s):
+            continue
+        dif = [(a, b) for a, b in zip(s, t) if a != b]
+        if len(dif) == 1 and frozenset(dif[0]) in _TROCAS_OCR:
+            return True
+    return False
+
+
+def escolher_contagem(
+    candidatos: List[Tuple[int, float]],
+    minimo: int,
+    maximo: int,
+    esperado: int,
+    fora_anterior: Optional[int] = None,
+) -> Tuple[int, str]:
+    """
+    O número de bolas nunca cai e só sobe com as bolas extras coletadas, então
+    uma leitura fora de [minimo, maximo] é erro de OCR. Devolve (valor, motivo):
+    a melhor leitura dentro da faixa, ou `esperado` se nenhuma couber.
+
+    Saída pra referência errada: se a leitura já tinha caído fora da faixa no
+    turno anterior (`fora_anterior`), repete agora, tem o mesmo número de
+    dígitos que a faixa e NÃO é uma troca conhecida de um dígito de um valor
+    da faixa, quem está errada é a referência — aceita a leitura. As trocas
+    conhecidas (3/8, 5/6...) se repetem enquanto o número não muda, então
+    repetir sozinho não basta; e dígito perdido (43 lido como 1) nunca passa.
+    """
+    lido = candidatos[0][0] if candidatos else None
+    if (
+        lido is not None
+        and fora_anterior is not None
+        and abs(lido - fora_anterior) <= (maximo - minimo) + 1
+        and len(str(lido)) == len(str(minimo))
+        and not _troca_conhecida(lido, minimo, maximo)
+    ):
+        return lido, f"aceitou {lido}: repetiu fora da faixa, a referencia {minimo} estava errada"
+    for valor, _nota in candidatos:
+        if minimo <= valor <= maximo:
+            motivo = "" if valor == lido else f"trocou digito ({lido} -> {valor})"
+            return valor, motivo
+    return esperado, f"leu {lido}, fora de [{minimo}, {maximo}]; usando o esperado {esperado}"
 
 
 def read_ball_count_template() -> int:
-    """Lê o número de bolas via template matching na região BALL_COUNT_REGION."""
+    """
+    Lê o número de bolas na região BALL_COUNT_REGION ("x14" -> 14). Também
+    preenche CONTADOR_CANDIDATOS com as leituras alternativas.
+    """
     _load_digit_templates()
+    CONTADOR_CANDIDATOS.clear()
     if not _DIGIT_TEMPLATES:
         return 0
 
@@ -184,7 +257,8 @@ def read_ball_count_template() -> int:
     components = []
     for i in range(1, n_labels):
         x, y, w, h, area = stats[i]
-        if area < 15 or h < 6:
+        # antigo: if area < 15 or h < 6
+        if area < cfg.MIN_BALL_COUNT_DIGIT_AREA or h < cfg.MIN_BALL_COUNT_DIGIT_H:
             continue
         crop = mask[y : y + h, x : x + w]
         components.append((x, crop))
@@ -199,15 +273,20 @@ def read_ball_count_template() -> int:
     if not digit_components:
         return 0
 
-    digits_str = ""
-    for _, crop in digit_components:
-        d = _match_digit(crop)
-        if d is not None:
-            digits_str += d
-
-    if not digits_str:
+    # Mesmo corte de _match_digit: abaixo de 0.6 o componente não conta como dígito
+    ranks = [r for r in (_rank_digit(crop) for _, crop in digit_components) if r and r[0][1] >= 0.6]
+    if not ranks:
         return 0
-    return int(digits_str)
+
+    melhor = "".join(r[0][0] for r in ranks)
+    CONTADOR_CANDIDATOS.append((int(melhor), sum(r[0][1] for r in ranks)))
+    for i, r in enumerate(ranks):
+        if len(r) > 1:
+            alt = melhor[:i] + r[1][0] + melhor[i + 1 :]
+            nota = sum(rr[0][1] for rr in ranks) - r[0][1] + r[1][1]
+            CONTADOR_CANDIDATOS.append((int(alt), nota))
+    CONTADOR_CANDIDATOS[1:] = sorted(CONTADOR_CANDIDATOS[1:], key=lambda vn: -vn[1])
+    return int(melhor)
 
 
 def capture_screen() -> np.ndarray:
@@ -218,6 +297,39 @@ def capture_screen() -> np.ndarray:
     # mss retorna BGRA, converter para BGR
     frame = np.array(raw, dtype=np.uint8)[:, :, :3]
     return frame
+
+
+def esperar_tabuleiro_parado(
+    intervalo: float = 0.2,
+    estaveis: int = 2,
+    teto: float = 4.0,
+    limiar: int = 25,
+    fracao_max: float = 0.003,
+) -> Tuple[float, bool]:
+    """
+    Espera os blocos terminarem de descer depois da rodada: captura a GRADE (o
+    robô embaixo tem animação, fica de fora) a cada `intervalo` e considera
+    parado quando `estaveis` comparações seguidas mudam menos de `fracao_max`
+    dos pixels (diferença > `limiar` em cinza). Desiste em `teto` segundos.
+
+    Substitui os sleeps fixos de 2s + 3s do main (5s todo turno). No pior caso
+    (algo que nunca para de piscar) espera `teto`, menos que antes.
+    Devolve (segundos esperados, parou).
+    """
+    y1, y2 = max(0, cfg.LEVEL_TOPS[-1]), cfg.LEVEL_BOTS[0]
+    t0 = time.monotonic()
+    anterior = None
+    seguidos = 0
+    while time.monotonic() - t0 < teto:
+        cinza = cv2.cvtColor(capture_screen()[y1:y2], cv2.COLOR_BGR2GRAY)
+        if anterior is not None:
+            mudou = np.count_nonzero(cv2.absdiff(cinza, anterior) > limiar) / cinza.size
+            seguidos = seguidos + 1 if mudou < fracao_max else 0
+            if seguidos >= estaveis:
+                return time.monotonic() - t0, True
+        anterior = cinza
+        time.sleep(intervalo)
+    return time.monotonic() - t0, False
 
 
 # ─────────────────────────────────────────────
@@ -408,6 +520,57 @@ def _get_block_text_mask(roi_bgr: np.ndarray, is_triangle: bool = False) -> np.n
     return text_mask
 
 
+# HP que _read_hp devolve quando não conseguiu ler (ou leu "0"). A simulação
+# pula blocos com HP <= 0 — a bola atravessaria um bloco vivo (turno 5 do
+# logs/bot_1) — então ajustar_hp troca isso por uma estimativa antes de simular.
+HP_DESCONHECIDO = 0
+
+
+def ajustar_hp(blocks: List["Block"], anterior: dict) -> List[str]:
+    """
+    Corrige o HP lido usando o turno anterior. `anterior` mapeia a célula NO
+    TABULEIRO ATUAL, (row, col), para (hp_lido_antes, hp_previsto) do bloco que
+    estava uma fileira acima (tudo desce uma fileira por rodada).
+
+      - HP desconhecido: usa o previsto do bloco; se ele é novo (fileira do
+        topo) ou o previsto era 0, usa o maior HP lido no tabuleiro.
+      - HP não sobe: lido acima do que se leu no turno anterior é erro de OCR
+        (no bot_1: 44 lido como 180, 9 como 45) — usa o valor anterior.
+
+    Pode rodar duas vezes: o scan_game chama sem referência (desconhecido vira
+    o maior HP) e o main de novo com `anterior`, que refina os estimados.
+    Marca Block.hp_estimado e devolve uma linha de log por ajuste.
+    """
+    msgs = []
+    nome = lambda b: f"L{7 - b.row_index}C{b.col_index}"
+    # desconhecido = ilegível agora, ou estimado numa passada sem referência
+    desconhecidos = [b for b in blocks if b.hp <= HP_DESCONHECIDO or b.hp_estimado]
+    ids_desc = {id(b) for b in desconhecidos}  # identidade: Block tem arrays numpy, == não serve
+
+    # 1) HP não sobe — antes de calcular o maior, senão uma leitura errada pra
+    #    cima (44 lido como 180) viraria a estimativa dos blocos novos
+    for b in blocks:
+        if id(b) in ids_desc:
+            continue
+        antes = anterior.get((b.row_index, b.col_index))
+        if antes and b.hp > antes[0]:
+            msgs.append(f"{nome(b)}: leu {b.hp}, mas antes era {antes[0]} (HP nao sobe) -> {antes[0]}")
+            b.hp = antes[0]
+            b.hp_estimado = True
+
+    # 2) desconhecidos: previsto do turno anterior, senão o maior HP lido
+    maior = max((b.hp for b in blocks if id(b) not in ids_desc), default=1)
+    for b in desconhecidos:
+        antes = anterior.get((b.row_index, b.col_index))
+        if antes and antes[1] > 0:
+            b.hp, origem = antes[1], "previsto no turno anterior"
+        else:
+            b.hp, origem = maior, "maior HP do tabuleiro"
+        b.hp_estimado = True
+        msgs.append(f"{nome(b)}: HP ilegivel -> {b.hp} ({origem})")
+    return msgs
+
+
 def _read_hp(
     frame_bgr: np.ndarray,
     x: int,
@@ -425,7 +588,10 @@ def _read_hp(
     is_triangle=True propaga pro _get_block_text_mask que dilata o hull
     pra recuperar pixels de texto cortados pela hipotenusa do triângulo.
 
-    Retorna (hp, text_mask). text_mask é sempre retornada (mesmo em falha)
+    Retorna (hp, text_mask). hp = HP_DESCONHECIDO (0) quando a leitura falha
+    (antigo: 1, o que fazia a simulação achar que o bloco morria com um hit);
+    ajustar_hp() troca o desconhecido por uma estimativa depois do scan.
+    text_mask é sempre retornada (mesmo em falha)
     para alimentar a janela 'OCR: HP lido por bloco' — é vazia 0x0 só quando
     a ROI nem chegou a ser processada.
     """
@@ -446,30 +612,31 @@ def _read_hp(
     x2, y2 = x + w - pad_x, y + h - pad_y
 
     if x2 <= x1 or y2 <= y1:
-        return 1, empty
+        return HP_DESCONHECIDO, empty
 
     roi = frame_bgr[y1:y2, x1:x2]
     if roi.size == 0 or roi.shape[0] < 4 or roi.shape[1] < 4:
-        return 1, empty
+        return HP_DESCONHECIDO, empty
 
     text_mask = _get_block_text_mask(roi, is_triangle=is_triangle)
 
     if np.count_nonzero(text_mask) < 5:
-        return 1, text_mask
+        return HP_DESCONHECIDO, text_mask
 
     n_labels, _, stats, _ = cv2.connectedComponentsWithStats(text_mask, connectivity=8)
     if is_2x2:
         # 2×2: ROI tem ~4x mais pixels que num 1×1, então o min_area
         # proporcional descartava os dígitos "0" e "7" do "107", deixando só
         # o "1". Fixo em 50 (equivalente ao 1×1 normal).
-        min_area = max(3, 50)
+        # antigo: min_area = max(3, 50)
+        min_area = max(3, cfg.MIN_HP_DIGIT_AREA_2X2)
     else:
         min_area = max(3, (x2 - x1) * (y2 - y1) // 100)
 
     # CORREÇÃO 1: Carrega os templates corretos do HP (Pasta: hp_digits)
     _load_hp_digit_templates()
     if not _HP_DIGIT_TEMPLATES:
-        return 1, text_mask
+        return HP_DESCONHECIDO, text_mask
 
     components = []
     for i in range(1, n_labels):
@@ -480,7 +647,7 @@ def _read_hp(
         components.append((cx, crop))
 
     if not components:
-        return 1, text_mask
+        return HP_DESCONHECIDO, text_mask
 
     components.sort(key=lambda c: c[0])
     digits_str = ""
@@ -491,7 +658,8 @@ def _read_hp(
             digits_str += d
 
     if not digits_str:
-        return 1, text_mask
+        return HP_DESCONHECIDO, text_mask
+    # "0" sozinho (ou "00") não é HP de bloco vivo: também vira desconhecido
     return int(digits_str), text_mask
 
 
@@ -748,7 +916,8 @@ def detect_blocks(frame: np.ndarray) -> List[Block]:
 
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    _MARGIN = 3
+    # antigo: _MARGIN = 3
+    _MARGIN = cfg.BLOCK_EDGE_MARGIN
 
     # HP do bloco: leitura direta do número escrito dentro,
     # via template matching contra templates/digits/ (fundo preto, dígito branco).
@@ -766,7 +935,8 @@ def detect_blocks(frame: np.ndarray) -> List[Block]:
         x, y, w, h = cv2.boundingRect(cnt)
 
         # Power-ups são pequenos demais para ser bloco
-        if w < 35 or h < 35:
+        # antigo: if w < 35 or h < 35
+        if w < cfg.MIN_BLOCK_SIDE or h < cfg.MIN_BLOCK_SIDE:
             continue
 
         # DEBUG: rastreia contornos grandes (>= 2 blocos de área)
@@ -1399,6 +1569,7 @@ _POWERUP_HSV_RANGES = [
     ),
     ("LASER", cfg.POWERUP_LASER_HSV_LOW, cfg.POWERUP_LASER_HSV_HIGH),
     (PowerUpType.BONUS_B, cfg.POWERUP_B_HSV_LOW, cfg.POWERUP_B_HSV_HIGH),
+    (PowerUpType.RANDOM, cfg.POWERUP_RANDOM_HSV_LOW, cfg.POWERUP_RANDOM_HSV_HIGH),
 ]
 
 
@@ -1440,7 +1611,8 @@ def detect_powerups(frame: np.ndarray) -> List[PowerUp]:
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         for cnt in contours:
             area = cv2.contourArea(cnt)
-            if area < 50:
+            # antigo: if area < 50
+            if area < cfg.MIN_POWERUP_AREA:
                 continue
             peri = cv2.arcLength(cnt, True)
             if peri == 0:
@@ -1448,7 +1620,8 @@ def detect_powerups(frame: np.ndarray) -> List[PowerUp]:
             circularity = 4 * np.pi * area / (peri * peri)
             if circularity > 0.6:
                 (cx, cy), radius = cv2.minEnclosingCircle(cnt)
-                if radius < 7 or radius > 15:
+                # antigo: if radius < 7 or radius > 15
+                if radius < cfg.MIN_POWERUP_RADIUS or radius > cfg.MAX_POWERUP_RADIUS:
                     continue
                 if ptype == "LASER":
                     final_type = _detect_laser_orientation(gray, cx, cy, radius)
@@ -1489,7 +1662,8 @@ def detect_ball(frame: np.ndarray) -> Optional[Tuple[float, float]]:
 
     for cnt in contours:
         area = cv2.contourArea(cnt)
-        if area < 20 or area > 500:
+        # antigo: if area < 20 or area > 500
+        if area < cfg.MIN_BALL_AREA or area > cfg.MAX_BALL_AREA:
             continue
 
         peri = cv2.arcLength(cnt, True)
@@ -1638,6 +1812,10 @@ def scan_game() -> GameState:
         )
 
     blocks = detect_blocks(frame)
+    # Sem referência do turno anterior: HP ilegível vira o maior HP do tabuleiro
+    # (nunca 0, que a simulação trataria como bloco morto). O main refina depois
+    # com o previsto do turno anterior (ajustar_hp com `anterior`).
+    ajustar_hp(blocks, {})
     powerups = detect_powerups(frame)
     ball_pos = detect_ball(frame)
     n_balls = read_ball_count_template()
