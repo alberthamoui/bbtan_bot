@@ -174,6 +174,76 @@ def _match_digit(crop: np.ndarray) -> Optional[str]:
     return notas[0][0]
 
 
+# Exemplos reais dos dígitos do contador, no tamanho nativo (13 px com ESCALA 1).
+# templates/contador/N.png é uma tira com os exemplos do dígito N lado a lado,
+# um por célula de _CONTADOR_CEL px, cortados dos turno_NNN_contador.png dos
+# logs bot_3 a bot_5 e rotulados conferindo cada imagem (sem repetidos).
+# antigo: só templates/digits — UM template por dígito, ampliado pra 28 px e
+# comparado contando pixels iguais (fundo incluso). Acertava 78-84% dos
+# contadores e confundia 5/6 e 3/8, que no tamanho real diferem em 2-3 pixels.
+_CONTADOR_EXEMPLOS: dict = {}  # {dígito: array (n, H, W) bool, já com margem}
+_CONTADOR_H = 13
+_CONTADOR_CEL = 12
+
+
+def _contador_canvas(crop: np.ndarray) -> np.ndarray:
+    """Recorte colado no canto superior esquerdo, com 1 px de margem pra deslocar."""
+    out = np.zeros((_CONTADOR_H + 2, _CONTADOR_CEL + 2), dtype=bool)
+    h, w = min(_CONTADOR_H, crop.shape[0]), min(_CONTADOR_CEL, crop.shape[1])
+    out[1 : 1 + h, 1 : 1 + w] = crop[:h, :w] > 0
+    return out
+
+
+def _load_contador_exemplos():
+    if _CONTADOR_EXEMPLOS:
+        return
+    pasta = Path(__file__).resolve().parent / "templates" / "contador"
+    for p in sorted(pasta.glob("*.png")):
+        if not p.stem.isdigit():
+            continue
+        tira = cv2.imread(str(p), cv2.IMREAD_GRAYSCALE)
+        if tira is None:
+            continue
+        exemplos = []
+        for x0 in range(0, tira.shape[1], _CONTADOR_CEL):
+            cel = tira[:, x0 : x0 + _CONTADOR_CEL] > 127
+            ys, xs = np.nonzero(cel)
+            if len(xs):
+                exemplos.append(_contador_canvas(cel[ys.min() : ys.max() + 1, xs.min() : xs.max() + 1]))
+        if exemplos:
+            _CONTADOR_EXEMPLOS[p.stem] = np.array(exemplos)
+
+
+def _rank_contador(crop: np.ndarray) -> List[Tuple[str, float]]:
+    """
+    [(dígito, nota)] do mais parecido ao menos, comparando o recorte com CADA
+    exemplo de templates/contador (vizinho mais próximo, deslocando ±1 px).
+    nota = 1 - pixels diferentes / (acesos no recorte + acesos no exemplo):
+    1 = idêntico. Exemplos em vez de um template médio porque o antialiasing
+    muda de uma ocorrência pra outra (traço de 1 ou 2 px) e a média ficava
+    no meio do caminho entre 0, 8 e 9.
+    """
+    if not _CONTADOR_EXEMPLOS:
+        return []
+    if crop.shape[0] != _CONTADOR_H:  # outra ESCALA: leva o recorte pra altura dos exemplos
+        w = max(1, round(crop.shape[1] * _CONTADOR_H / crop.shape[0]))
+        crop = cv2.resize(crop, (w, _CONTADOR_H), interpolation=cv2.INTER_NEAREST)
+    a = _contador_canvas(crop)
+    n_a = int(a.sum())
+    notas = []
+    for digit, ex in _CONTADOR_EXEMPLOS.items():
+        n_ex = ex.sum(axis=(1, 2))
+        melhor = 0.0
+        for dy in (-1, 0, 1):
+            for dx in (-1, 0, 1):
+                s = np.roll(np.roll(ex, dy, axis=1), dx, axis=2)
+                dif = (s ^ a).sum(axis=(1, 2)) / np.maximum(1, n_ex + n_a)
+                melhor = max(melhor, 1.0 - float(dif.min()))
+        notas.append((digit, melhor))
+    notas.sort(key=lambda dn: -dn[1])
+    return notas
+
+
 # Leituras alternativas do último contador lido: [(valor, nota)], a melhor
 # primeiro, e depois trocando UM dígito pelo 2o candidato dele. O main usa pra
 # escolher um valor coerente com o turno anterior (escolher_contagem).
@@ -249,20 +319,13 @@ def escolher_contagem(
     return esperado, f"leu {lido}, fora de [{minimo}, {maximo}]; usando o esperado {esperado}"
 
 
-def read_ball_count_template() -> int:
+def _digitos_contador(img_bgr: np.ndarray) -> List[np.ndarray]:
     """
-    Lê o número de bolas na região BALL_COUNT_REGION ("x14" -> 14). Também
-    preenche CONTADOR_CANDIDATOS com as leituras alternativas.
+    Máscaras binárias dos dígitos do contador ("x14" -> [máscara do 1, do 4]),
+    da esquerda pra direita, a partir da imagem de BALL_COUNT_REGION. Separado
+    da captura pra rodar offline nas imagens turno_NNN_contador.png dos logs.
     """
-    _load_digit_templates()
-    CONTADOR_CANDIDATOS.clear()
-    if not _DIGIT_TEMPLATES:
-        return 0
-
-    bx, by, bw, bh = cfg.BALL_COUNT_REGION
-    mon = {"top": by, "left": bx, "width": bw, "height": bh}
-    img = np.array(_sct.grab(mon), dtype=np.uint8)[:, :, :3]
-    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    hsv = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2HSV)
     mask = cv2.inRange(hsv, cfg.BALL_COUNT_HSV_LOW, cfg.BALL_COUNT_HSV_HIGH)
 
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
@@ -281,16 +344,32 @@ def read_ball_count_template() -> int:
 
     components.sort(key=lambda c: c[0])
 
-    if not components:
-        return 0
-
     # Pula o primeiro componente (o "x" do prefixo)
-    digit_components = components[1:]
+    return [crop for _, crop in components[1:]]
+
+
+def ler_contador(img_bgr: np.ndarray) -> int:
+    """
+    Lê o número de bolas na imagem de BALL_COUNT_REGION ("x14" -> 14). Também
+    preenche CONTADOR_CANDIDATOS com as leituras alternativas. 0 = não leu.
+    """
+    CONTADOR_CANDIDATOS.clear()
+    _load_contador_exemplos()
+    rank = _rank_contador
+    if not _CONTADOR_EXEMPLOS:
+        # sem templates/contador: volta pro template único de 28 px
+        _load_digit_templates()
+        rank = _rank_digit
+        if not _DIGIT_TEMPLATES:
+            return 0
+
+    digit_components = _digitos_contador(img_bgr)
     if not digit_components:
         return 0
 
     # Mesmo corte de _match_digit: abaixo de 0.6 o componente não conta como dígito
-    ranks = [r for r in (_rank_digit(crop) for _, crop in digit_components) if r and r[0][1] >= 0.6]
+    # antigo: _rank_digit(crop) sempre
+    ranks = [r for r in (rank(crop) for crop in digit_components) if r and r[0][1] >= 0.6]
     if not ranks:
         return 0
 
@@ -303,6 +382,14 @@ def read_ball_count_template() -> int:
             CONTADOR_CANDIDATOS.append((int(alt), nota))
     CONTADOR_CANDIDATOS[1:] = sorted(CONTADOR_CANDIDATOS[1:], key=lambda vn: -vn[1])
     return int(melhor)
+
+
+def read_ball_count_template() -> int:
+    """Captura BALL_COUNT_REGION e lê o contador (ler_contador)."""
+    bx, by, bw, bh = cfg.BALL_COUNT_REGION
+    mon = {"top": by, "left": bx, "width": bw, "height": bh}
+    img = np.array(_sct.grab(mon), dtype=np.uint8)[:, :, :3]
+    return ler_contador(img)
 
 
 def capture_screen() -> np.ndarray:
