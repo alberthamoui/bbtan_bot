@@ -36,3 +36,6 @@ prints/
 
 # Logs de sessao do main.py (texto + imagens por turno)
 logs/
+
+# Capturas do jogo real (tools/capturar_jogo.py)
+capturas/
