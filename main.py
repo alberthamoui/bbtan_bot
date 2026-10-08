@@ -75,7 +75,7 @@ def parse_args():
     parser.add_argument(
         "--referencia",
         action="store_true",
-        help="Salva capturas limpas do jogo real em logs/bot_N/referencia/: a "
+        help="Salva capturas limpas do jogo real em logs/captura_analise_N/referencia/: a "
         "janela inteira antes de cada tiro e uma rajada da rodada a cada "
         "--rajada-cada turnos (referencia pra versao local do jogo)",
     )
@@ -361,7 +361,8 @@ def main():
         print(f"Iniciando em {args.delay:.0f}s — posicione o jogo!")
         time.sleep(args.delay)
 
-    pasta_log = lt.abrir()
+    # antigo: lt.abrir() sempre (logs/bot_N)
+    pasta_log = lt.abrir("captura_analise" if args.referencia else "bot")
     lt.log(f"log da sessao: {pasta_log}")
     lt.log(
         f"GAME_REGION {cfg.GAME_REGION} | ESCALA {cfg.ESCALA:.3f} | "

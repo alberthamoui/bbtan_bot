@@ -72,26 +72,30 @@ _BRANCO = (255, 255, 255)
 _AZUL = (255, 160, 0)
 
 
-def _proxima_pasta() -> Path:
+def _proxima_pasta(prefixo: str = "bot") -> Path:
     """
-    logs/bot_N/ com N = maior número já usado + 1 (bot_1 na primeira sessão).
-    Só conta pastas bot_<número>: nomes antigos como bot_20260929_173907 ficam
-    de fora da conta.
+    logs/<prefixo>_N/ com N = maior número já usado com esse prefixo + 1
+    (bot_1 na primeira sessão). Só conta pastas <prefixo>_<número>: nomes
+    antigos como bot_20260929_173907 ficam de fora da conta.
     """
+    # antigo: só "bot_" (prefixo fixo)
     usados = [
-        int(p.name[4:])
-        for p in PASTA.glob("bot_*")
-        if p.is_dir() and p.name[4:].isdigit()
+        int(p.name[len(prefixo) + 1 :])
+        for p in PASTA.glob(f"{prefixo}_*")
+        if p.is_dir() and p.name[len(prefixo) + 1 :].isdigit()
     ]
-    return PASTA / f"bot_{max(usados, default=0) + 1}"
+    return PASTA / f"{prefixo}_{max(usados, default=0) + 1}"
 
 
-def abrir() -> Path:
-    """Cria logs/bot_N/ (ver _proxima_pasta) e abre o sessao.log. Devolve a pasta."""
+def abrir(prefixo: str = "bot") -> Path:
+    """
+    Cria logs/<prefixo>_N/ (ver _proxima_pasta) e abre o sessao.log. Devolve a
+    pasta. O main usa "captura_analise" no modo --referencia e "bot" no normal.
+    """
     global _arquivo, _pasta_sessao
     # antigo: PASTA / f"bot_{datetime.now():%Y%m%d_%H%M%S}"
     PASTA.mkdir(exist_ok=True)
-    _pasta_sessao = _proxima_pasta()
+    _pasta_sessao = _proxima_pasta(prefixo)
     _pasta_sessao.mkdir()
     _arquivo = open(_pasta_sessao / "sessao.log", "a", encoding="utf-8")
     _arquivo.write(f"sessao iniciada em {datetime.now():%Y-%m-%d %H:%M:%S}\n")

@@ -20,7 +20,7 @@ Dois jeitos de usar:
 
 2. Pelo bot: `python main.py --referencia` usa as funções daqui pra salvar a
    tela antes de cada tiro e uma rajada a cada --rajada-cada turnos, dentro
-   da pasta do log da sessão (logs/bot_N/referencia/).
+   da pasta do log da sessão (logs/captura_analise_N/referencia/).
 
 Arquivos:
   tela_*.png               janela do jogo inteira
