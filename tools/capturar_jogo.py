@@ -56,12 +56,13 @@ import config as cfg
 VK_F8, VK_F9, VK_F10 = 0x77, 0x78, 0x79
 
 # Margem em volta do GAME_REGION na captura da janela, no perfil de referência
-# (452 px de largura). O HUD de baixo vai até ~750 px abaixo do topo do
-# tabuleiro (botão retrieve em 703-741); o de cima ainda não foi medido, por
-# isso a sobra generosa. Se a janela sair cortada, aumente aqui.
+# (452 px de largura). Medido no logs/captura_analise_1: a janela do jogo vai
+# de ~50 px à esquerda/direita do tabuleiro, o "LINE N" fica ~60 px acima
+# dele e a barra de itens de baixo termina ~772 px abaixo do topo dele.
 MARGEM_X = 60
 MARGEM_CIMA = 160
-MARGEM_BAIXO = 820  # medido do topo do GAME_REGION
+# antigo: 820 — pegava a barra de tarefas do Windows embaixo da janela
+MARGEM_BAIXO = 776  # medido do topo do GAME_REGION
 
 PASTA_BASE = Path(__file__).resolve().parent.parent / "capturas"
 
