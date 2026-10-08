@@ -2,25 +2,35 @@
 capturar_jogo.py — Captura telas LIMPAS do jogo real (sem nenhuma anotação do
 bot), como referência para montar a versão local do BBTAN.
 
-Deixe o emulador aberto e jogue normalmente com o mouse. Este script fica
-escutando teclas globais (funciona com o foco no emulador):
+Dois jeitos de usar:
 
-  F8   captura única: a janela do jogo inteira (tabuleiro + HUD de cima e de
-       baixo), em PNG. Use para a aparência: início do jogo, cada tipo de
-       bloco e power-up, botões, tela de game over.
-  F9   rajada: grava só o tabuleiro (GAME_REGION) na maior taxa possível por
-       --segundos (padrão 4). Aperte F9 e DEPOIS dispare: serve para medir a
-       velocidade da bola, o intervalo entre bolas e o efeito do acelerar.
-  F10  sai.
+1. Manual (você joga com o mouse): este script fica escutando teclas globais
+   (funciona com o foco no emulador):
 
-Tudo vai para capturas/AAAAMMDD_HHMMSS/ (fora do git):
-  tela_NNN.png             capturas do F8
-  rajada_NNN/f_NNNN.png    quadros da rajada
-  rajada_NNN/tempos.csv    quadro,segundos desde o início da rajada
+     F8   captura única: a janela do jogo inteira (tabuleiro + HUD de cima e
+          de baixo), em PNG. Use para a aparência: início do jogo, cada tipo
+          de bloco e power-up, botões, tela de game over.
+     F9   rajada: grava só o tabuleiro (GAME_REGION) na maior taxa possível
+          por --segundos (padrão 4). Aperte F9 e DEPOIS dispare: serve para
+          medir a velocidade da bola, o intervalo entre bolas e o efeito do
+          acelerar.
+     F10  sai.
+
+   Saída em capturas/AAAAMMDD_HHMMSS/ (fora do git).
+
+2. Pelo bot: `python main.py --referencia` usa as funções daqui pra salvar a
+   tela antes de cada tiro e uma rajada a cada --rajada-cada turnos, dentro
+   da pasta do log da sessão (logs/bot_N/referencia/).
+
+Arquivos:
+  tela_*.png               janela do jogo inteira
+  rajada_*/f_NNNN.png      quadros da rajada (só o GAME_REGION)
+  rajada_*/tempos.csv      quadro,segundos desde o início da rajada
+  rajada_*/eventos.json    instantes marcados (disparo, acelerar...), no mesmo relógio
   regioes.json             onde na tela cada captura foi feita (pra alinhar
                            com GAME_REGION depois)
 
-Uso:
+Uso manual:
   python tools/capturar_jogo.py
   python tools/capturar_jogo.py --segundos 6
 """
@@ -29,9 +39,11 @@ import argparse
 import ctypes
 import json
 import sys
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
@@ -43,7 +55,7 @@ import config as cfg
 
 VK_F8, VK_F9, VK_F10 = 0x77, 0x78, 0x79
 
-# Margem em volta do GAME_REGION na captura do F8, no perfil de referência
+# Margem em volta do GAME_REGION na captura da janela, no perfil de referência
 # (452 px de largura). O HUD de baixo vai até ~750 px abaixo do topo do
 # tabuleiro (botão retrieve em 703-741); o de cima ainda não foi medido, por
 # isso a sobra generosa. Se a janela sair cortada, aumente aqui.
@@ -54,16 +66,8 @@ MARGEM_BAIXO = 820  # medido do topo do GAME_REGION
 PASTA_BASE = Path(__file__).resolve().parent.parent / "capturas"
 
 
-def _apertou(vk: int, estado: dict) -> bool:
-    """True só na borda de descida da tecla (segurar não repete)."""
-    agora = bool(ctypes.windll.user32.GetAsyncKeyState(vk) & 0x8000)
-    antes = estado.get(vk, False)
-    estado[vk] = agora
-    return agora and not antes
-
-
-def _regiao_janela(sct) -> dict:
-    """Retângulo do F8: GAME_REGION com margens, cortado aos limites dos monitores."""
+def regiao_janela(sct) -> dict:
+    """Retângulo da janela do jogo: GAME_REGION com margens, cortado aos limites dos monitores."""
     gx, gy, gw, _ = cfg.GAME_REGION
     tela = sct.monitors[0]  # todos os monitores juntos
     x0 = max(tela["left"], gx - cfg.px(MARGEM_X))
@@ -73,38 +77,98 @@ def _regiao_janela(sct) -> dict:
     return {"left": x0, "top": y0, "width": x1 - x0, "height": y1 - y0}
 
 
+def regiao_tabuleiro() -> dict:
+    gx, gy, gw, gh = cfg.GAME_REGION
+    return {"left": gx, "top": gy, "width": gw, "height": gh}
+
+
 def _grab(sct, mon: dict) -> np.ndarray:
     return np.array(sct.grab(mon), dtype=np.uint8)[:, :, :3]
 
 
-def captura_unica(sct, pasta: Path, n: int, regioes: dict) -> None:
-    mon = _regiao_janela(sct)
-    nome = f"tela_{n:03d}.png"
+def salvar_janela(sct, pasta: Path, nome: str, regioes: dict) -> None:
+    """Salva a janela do jogo inteira em pasta/nome e anota a região em `regioes`."""
+    mon = regiao_janela(sct)
     cv2.imwrite(str(pasta / nome), _grab(sct, mon))
     regioes[nome] = mon
-    print(f"  [F8] {nome} ({mon['width']}x{mon['height']})")
 
 
-def rajada(sct, pasta: Path, n: int, segundos: float, regioes: dict) -> None:
-    gx, gy, gw, gh = cfg.GAME_REGION
-    mon = {"left": gx, "top": gy, "width": gw, "height": gh}
-    print(f"  [F9] gravando {segundos:.0f}s... dispare agora")
-    quadros, tempos = [], []
-    t0 = time.perf_counter()
-    while (t := time.perf_counter() - t0) < segundos:
-        quadros.append(_grab(sct, mon))
-        tempos.append(t)
-    sub = pasta / f"rajada_{n:03d}"
-    sub.mkdir()
-    for i, q in enumerate(quadros):
-        # compressão 1: PNG continua sem perda, só grava mais rápido
-        cv2.imwrite(str(sub / f"f_{i:04d}.png"), q, [cv2.IMWRITE_PNG_COMPRESSION, 1])
-    with open(sub / "tempos.csv", "w", encoding="utf-8") as f:
-        f.write("quadro,segundos\n")
-        f.writelines(f"{i},{t:.5f}\n" for i, t in enumerate(tempos))
-    regioes[sub.name] = mon
-    fps = len(quadros) / max(tempos[-1], 1e-6) if tempos else 0
-    print(f"  [F9] {sub.name}: {len(quadros)} quadros ({fps:.0f} fps)")
+def salvar_regioes(pasta: Path, regioes: dict) -> None:
+    dados = {"GAME_REGION": regiao_tabuleiro(), **regioes}
+    with open(pasta / "regioes.json", "w", encoding="utf-8") as f:
+        json.dump(dados, f, indent=2)
+
+
+class Gravador:
+    """
+    Grava o GAME_REGION numa thread, o mais rápido possível, por `segundos`.
+    `marcar(nome)` anota um instante no mesmo relógio dos quadros (ex: o
+    disparo e o clique no acelerar). Se `janela_em` for dado, também tira UMA
+    foto da janela inteira nesse instante (o HUD durante a rodada).
+    """
+
+    def __init__(self, segundos: float, janela_em: Optional[float] = None):
+        self.segundos = segundos
+        self.janela_em = janela_em
+        self.quadros: list = []
+        self.tempos: list = []
+        self.eventos: dict = {}
+        self.janela: Optional[np.ndarray] = None
+        self.janela_regiao: Optional[dict] = None
+        self._t0 = 0.0
+        self._thread: Optional[threading.Thread] = None
+
+    def iniciar(self) -> None:
+        self._t0 = time.perf_counter()
+        self._thread = threading.Thread(target=self._rodar, daemon=True)
+        self._thread.start()
+
+    def marcar(self, nome: str) -> None:
+        self.eventos[nome] = round(time.perf_counter() - self._t0, 5)
+
+    def esperar(self) -> None:
+        if self._thread is not None:
+            self._thread.join()
+
+    def _rodar(self) -> None:
+        mon = regiao_tabuleiro()
+        with mss.mss() as sct:  # mss não pode ser compartilhado entre threads
+            while (t := time.perf_counter() - self._t0) < self.segundos:
+                self.quadros.append(_grab(sct, mon))
+                self.tempos.append(t)
+                if self.janela_em is not None and self.janela is None and t >= self.janela_em:
+                    self.janela_regiao = regiao_janela(sct)
+                    self.janela = _grab(sct, self.janela_regiao)
+                    self.eventos["foto_janela"] = round(time.perf_counter() - self._t0, 5)
+
+    def fps(self) -> float:
+        return len(self.tempos) / max(self.tempos[-1], 1e-6) if self.tempos else 0.0
+
+    def salvar(self, pasta: Path, nome: str, regioes: dict) -> Path:
+        """Grava os quadros em pasta/nome/ (PNG sem perda), tempos.csv e eventos.json."""
+        sub = pasta / nome
+        sub.mkdir(parents=True, exist_ok=True)
+        for i, q in enumerate(self.quadros):
+            # compressão 1: PNG continua sem perda, só grava mais rápido
+            cv2.imwrite(str(sub / f"f_{i:04d}.png"), q, [cv2.IMWRITE_PNG_COMPRESSION, 1])
+        with open(sub / "tempos.csv", "w", encoding="utf-8") as f:
+            f.write("quadro,segundos\n")
+            f.writelines(f"{i},{t:.5f}\n" for i, t in enumerate(self.tempos))
+        with open(sub / "eventos.json", "w", encoding="utf-8") as f:
+            json.dump(self.eventos, f, indent=2)
+        regioes[nome] = regiao_tabuleiro()
+        if self.janela is not None:
+            cv2.imwrite(str(pasta / f"tela_{nome}.png"), self.janela)
+            regioes[f"tela_{nome}.png"] = self.janela_regiao
+        return sub
+
+
+def _apertou(vk: int, estado: dict) -> bool:
+    """True só na borda de descida da tecla (segurar não repete)."""
+    agora = bool(ctypes.windll.user32.GetAsyncKeyState(vk) & 0x8000)
+    antes = estado.get(vk, False)
+    estado[vk] = agora
+    return agora and not antes
 
 
 def main():
@@ -114,7 +178,7 @@ def main():
 
     pasta = PASTA_BASE / datetime.now().strftime("%Y%m%d_%H%M%S")
     pasta.mkdir(parents=True)
-    regioes = {"GAME_REGION": dict(zip(("left", "top", "width", "height"), cfg.GAME_REGION))}
+    regioes: dict = {}
     print(f"Salvando em {pasta}")
     print("F8 = captura da tela | F9 = rajada do tabuleiro | F10 = sair")
 
@@ -130,15 +194,23 @@ def main():
                     break
                 if _apertou(VK_F8, estado):
                     n_tela += 1
-                    captura_unica(sct, pasta, n_tela, regioes)
+                    nome = f"tela_{n_tela:03d}.png"
+                    salvar_janela(sct, pasta, nome, regioes)
+                    salvar_regioes(pasta, regioes)
+                    print(f"  [F8] {nome}")
                 if _apertou(VK_F9, estado):
                     n_rajada += 1
-                    rajada(sct, pasta, n_rajada, args.segundos, regioes)
+                    print(f"  [F9] gravando {args.segundos:.0f}s... dispare agora")
+                    g = Gravador(args.segundos)
+                    g.iniciar()
+                    g.esperar()
+                    sub = g.salvar(pasta, f"rajada_{n_rajada:03d}", regioes)
+                    salvar_regioes(pasta, regioes)
+                    print(f"  [F9] {sub.name}: {len(g.quadros)} quadros ({g.fps():.0f} fps)")
                 time.sleep(0.02)
         except KeyboardInterrupt:
             pass
-    with open(pasta / "regioes.json", "w", encoding="utf-8") as f:
-        json.dump(regioes, f, indent=2)
+    salvar_regioes(pasta, regioes)
     print(f"\n{n_tela} capturas e {n_rajada} rajadas em {pasta}")
 
 

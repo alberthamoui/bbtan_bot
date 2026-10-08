@@ -416,6 +416,39 @@ def capturar_rastro(base_frame: np.ndarray, segundos: float = RASTRO_S) -> dict:
     }
 
 
+def rastro_de_quadros(base_frame: np.ndarray, quadros: list, tempos: list, desde: float = 0.0) -> dict:
+    """
+    O mesmo resultado de capturar_rastro, mas a partir de quadros já gravados
+    (rajada do modo --referencia, que grava o tabuleiro desde o disparo). Usa
+    só os quadros entre `desde` (instante do disparo) e `desde` + RASTRO_S,
+    pra medir igual aos outros turnos. A rajada não vigia o retrieve: a rodada
+    é dada como em andamento e o main espera o botão sumir normalmente.
+    """
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    base = cv2.inRange(cv2.cvtColor(base_frame, cv2.COLOR_BGR2HSV), cfg.BALL_HSV_LOW, cfg.BALL_HSV_HIGH)
+    base = cv2.dilate(base, kernel)
+    rh, rw = base.shape
+    primeiro = np.full((rh, rw), -1, dtype=np.int32)
+    usados = []
+    for frame, t in zip(quadros, tempos):
+        if t < desde:
+            continue
+        if t > desde + RASTRO_S:
+            break
+        bola = cv2.inRange(cv2.cvtColor(frame, cv2.COLOR_BGR2HSV), cfg.BALL_HSV_LOW, cfg.BALL_HSV_HIGH)
+        bola[base > 0] = 0
+        primeiro[(bola > 0) & (primeiro < 0)] = len(usados)
+        usados.append(t - desde)
+    return {
+        "primeiro": primeiro,
+        "tempos": usados,
+        "frames": len(usados),
+        "segundos": usados[-1] if usados else 0.0,
+        "retrieve_visto": True,
+        "rodada_acabou": False,
+    }
+
+
 # Janela (px de referência a partir da bola) usada pra medir o ângulo de saída:
 # longe o bastante pra sair de cima da bola/robô, perto o bastante pra ainda ser
 # o 1o segmento do voo (antes da 1a batida).

@@ -101,10 +101,16 @@ def execute_shot_swipe(ball_x: float, ball_y: float, angle_deg: float):
     )
 
 
+def click_acelerar():
+    """Clica no botão de acelerar, sem esperar (o modo --referencia controla o atraso)."""
+    pyautogui.click(cfg.SPEED_UP_X, cfg.SPEED_UP_Y)
+
+
 def speed_up_click():
     """Clica no botão de acelerar o jogo após o disparo."""
     time.sleep(cfg.SPEED_UP_DELAY)
-    pyautogui.click(cfg.SPEED_UP_X, cfg.SPEED_UP_Y)
+    # antigo: pyautogui.click(cfg.SPEED_UP_X, cfg.SPEED_UP_Y)
+    click_acelerar()
 
 
 def click_retrieve_button():

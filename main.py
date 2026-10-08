@@ -12,6 +12,8 @@ Uso:
   python main.py              -> Roda o bot
   python main.py --debug      -> Mostra visualização a cada turno
   python main.py --dry-run    -> Simula sem executar ações no mouse
+  python main.py --referencia -> Joga e salva capturas limpas do jogo real
+                                 (referência pra versão local do jogo)
 """
 
 import argparse
@@ -27,7 +29,14 @@ import log_turno as lt
 import vision
 from vision import scan_game, detect_retrieve_button, GameState, PowerUpType
 from physics import find_best_angle
-from executor import execute_shot, click_retrieve_button, angulo_compensado
+from executor import (
+    execute_shot,
+    execute_shot_swipe,
+    click_acelerar,
+    click_retrieve_button,
+    angulo_compensado,
+)
+from tools import capturar_jogo as cap
 from tools.visualizar_masks import (
     run_masks_window,
     update_level_display,
@@ -62,6 +71,19 @@ def parse_args():
         action="store_true",
         help="Visualizacao animada do dry-run (Phase 1: angulos candidatos, "
         "Phase 2: bola percorrendo a melhor trajetoria). Nao executa disparos.",
+    )
+    parser.add_argument(
+        "--referencia",
+        action="store_true",
+        help="Salva capturas limpas do jogo real em logs/bot_N/referencia/: a "
+        "janela inteira antes de cada tiro e uma rajada da rodada a cada "
+        "--rajada-cada turnos (referencia pra versao local do jogo)",
+    )
+    parser.add_argument(
+        "--rajada-cada",
+        type=int,
+        default=5,
+        help="Com --referencia: grava a rodada a cada N turnos (padrao 5)",
     )
     parser.add_argument(
         "--verbose-vision",
@@ -187,16 +209,29 @@ def aguardar_fim_da_rodada(dry_run: bool = False, rastro: Optional[dict] = None)
     lt.log(f"  rodada encerrada em {time.monotonic() - t0:.1f}s")
 
 
+# Modo --referencia: duração da rajada gravada a partir do disparo, quanto
+# esperar antes de apertar o acelerar (pra rajada pegar as duas velocidades)
+# e quando tirar a foto da janela inteira com a rodada em andamento.
+REF_RAJADA_S = 4.0
+REF_ATRASO_ACELERAR = 1.5
+REF_JANELA_EM = 1.0
+
+
 def run_turn(
     state: GameState,
     debug: bool = False,
     dry_run: bool = False,
     turno: int = 0,
+    gravador: Optional[cap.Gravador] = None,
 ):
     """
     Executa um turno completo a partir de um GameState já capturado.
     Retorna o SimResult do tiro (sucesso — o loop guarda pra conferir a previsão
     no turno seguinte), False (falha) ou "game_over".
+
+    Com `gravador` (modo --referencia), a gravação começa junto com o disparo e
+    o acelerar só é apertado depois de REF_ATRASO_ACELERAR, com os dois
+    instantes marcados na gravação.
     """
     if state.game_over:
         lt.log(
@@ -245,11 +280,21 @@ def run_turn(
 
     # ── 4. EXECUÇÃO ──
     if not dry_run:
-        execute_shot(ball_x, ball_y, best.angle)
+        if gravador is not None:
+            gravador.iniciar()
+            gravador.marcar("disparo")
+            execute_shot_swipe(ball_x, ball_y, best.angle)
+            gravador.marcar("swipe_fim")
+            time.sleep(REF_ATRASO_ACELERAR)
+            gravador.marcar("acelerar")
+            click_acelerar()
+        else:
+            execute_shot(ball_x, ball_y, best.angle)
         # antigo: lt.log(f"  >> disparo executado em {best.angle:.0f} graus")
         lt.log(
             f"  >> disparo executado em {best.angle:.0f} graus "
             f"(mirado {angulo_compensado(best.angle):.1f}, compensando o vies)"
+            + (f" | gravando a rodada, acelerar apos {REF_ATRASO_ACELERAR:.1f}s" if gravador else "")
         )
         # (a captura do rastro real foi pro loop principal, logo depois daqui,
         # porque ela também diz se a rodada já acabou)
@@ -323,6 +368,19 @@ def main():
         f"angulos {cfg.ANGLE_MIN}-{cfg.ANGLE_MAX} | raio da bola {cfg.BALL_RADIUS}px"
     )
 
+    # Modo --referencia: capturas limpas pra montar a versão local do jogo
+    pasta_ref = None
+    regioes_ref: dict = {}
+    sct_ref = None
+    jogo = 1  # o número do turno recomeça a cada jogo; os nomes levam os dois
+    if args.referencia:
+        import mss
+
+        pasta_ref = pasta_log / "referencia"
+        pasta_ref.mkdir()
+        sct_ref = mss.mss()
+        lt.log(f"referencia: capturas em {pasta_ref} (rajada a cada {args.rajada_cada} turnos)")
+
     turn = 0
     consecutive_fails = 0
     max_fails = 5
@@ -385,11 +443,20 @@ def main():
                     lt.log(conf)
             previsao = None
 
+            gravador = None
+            if pasta_ref is not None:
+                # janela inteira, limpa, antes do tiro (inclui a tela de game over)
+                cap.salvar_janela(sct_ref, pasta_ref, f"tela_j{jogo}_t{turn:03d}.png", regioes_ref)
+                cap.salvar_regioes(pasta_ref, regioes_ref)
+                if not state.game_over and (turn - 1) % max(1, args.rajada_cada) == 0:
+                    gravador = cap.Gravador(REF_RAJADA_S, janela_em=REF_JANELA_EM)
+
             status = run_turn(
                 state=state,
                 debug=args.debug,
                 dry_run=args.dry_run,
                 turno=turn,
+                gravador=gravador,
             )
 
             if status == "game_over":
@@ -418,6 +485,7 @@ def main():
                             time.sleep(4)
 
                 turn = 0
+                jogo += 1
                 consecutive_fails = 0
                 bolas_prev = mais_prev = 0  # jogo novo: contador volta a 1
                 lt.log("\n  Recomecando do zero!\n")
@@ -443,7 +511,21 @@ def main():
                 # as bolas ainda estiverem voando.
                 rastro = None
                 if not args.dry_run:
-                    rastro = lt.capturar_rastro(state.raw_frame)
+                    if gravador is not None and "disparo" in gravador.eventos:
+                        # turno de rajada: o rastro sai dos quadros já gravados
+                        gravador.esperar()
+                        rastro = lt.rastro_de_quadros(
+                            state.raw_frame, gravador.quadros, gravador.tempos, gravador.eventos["disparo"]
+                        )
+                        nome_rajada = f"rajada_j{jogo}_t{turn:03d}"
+                        gravador.salvar(pasta_ref, nome_rajada, regioes_ref)
+                        cap.salvar_regioes(pasta_ref, regioes_ref)
+                        lt.log(
+                            f"  referencia: {nome_rajada} ({len(gravador.quadros)} quadros, "
+                            f"{gravador.fps():.0f} fps)"
+                        )
+                    else:
+                        rastro = lt.capturar_rastro(state.raw_frame)
                     lt.salvar_real(turn, state, status, rastro)
                 aguardar_fim_da_rodada(dry_run=args.dry_run, rastro=rastro)
                 # (a espera dos blocos descerem virou esperar_tabuleiro_parado,
