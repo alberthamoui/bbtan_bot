@@ -361,26 +361,37 @@ def main():
         print(f"Iniciando em {args.delay:.0f}s — posicione o jogo!")
         time.sleep(args.delay)
 
-    # antigo: lt.abrir() sempre (logs/bot_N)
-    pasta_log = lt.abrir("captura_analise" if args.referencia else "bot")
-    lt.log(f"log da sessao: {pasta_log}")
-    lt.log(
-        f"GAME_REGION {cfg.GAME_REGION} | ESCALA {cfg.ESCALA:.3f} | "
-        f"angulos {cfg.ANGLE_MIN}-{cfg.ANGLE_MAX} | raio da bola {cfg.BALL_RADIUS}px"
-    )
-
-    # Modo --referencia: capturas limpas pra montar a versão local do jogo
-    pasta_ref = None
-    regioes_ref: dict = {}
+    # Uma pasta de log POR PARTIDA: logs/bot_N (ou logs/captura_analise_N com
+    # --referencia). Quando o bot perde e recomeça sozinho, a partida nova vai
+    # pra N+1 — antes tudo ia pra mesma pasta e as imagens turno_NNN_* da
+    # partida nova sobrescreviam as da anterior (logs/bot_4).
+    # antigo: lt.abrir() uma vez só, pra sessão inteira
+    prefixo_log = "captura_analise" if args.referencia else "bot"
+    regioes_ref: dict = {}  # regiões das capturas da pasta atual (regioes.json)
     sct_ref = None
-    jogo = 1  # o número do turno recomeça a cada jogo; os nomes levam os dois
     if args.referencia:
         import mss
 
-        pasta_ref = pasta_log / "referencia"
-        pasta_ref.mkdir()
         sct_ref = mss.mss()
-        lt.log(f"referencia: capturas em {pasta_ref} (rajada a cada {args.rajada_cada} turnos)")
+
+    def abrir_partida():
+        """Abre a pasta de log da partida (e a referencia/ dela). Devolve (pasta, pasta_ref)."""
+        pasta = lt.abrir(prefixo_log)
+        lt.log(f"log da partida: {pasta}")
+        lt.log(
+            f"GAME_REGION {cfg.GAME_REGION} | ESCALA {cfg.ESCALA:.3f} | "
+            f"angulos {cfg.ANGLE_MIN}-{cfg.ANGLE_MAX} | raio da bola {cfg.BALL_RADIUS}px"
+        )
+        ref = None
+        regioes_ref.clear()
+        if args.referencia:
+            # Modo --referencia: capturas limpas pra montar a versão local do jogo
+            ref = pasta / "referencia"
+            ref.mkdir()
+            lt.log(f"referencia: capturas em {ref} (rajada a cada {args.rajada_cada} turnos)")
+        return pasta, ref
+
+    pasta_log, pasta_ref = abrir_partida()
 
     turn = 0
     consecutive_fails = 0
@@ -447,7 +458,8 @@ def main():
             gravador = None
             if pasta_ref is not None:
                 # janela inteira, limpa, antes do tiro (inclui a tela de game over)
-                cap.salvar_janela(sct_ref, pasta_ref, f"tela_j{jogo}_t{turn:03d}.png", regioes_ref)
+                # antigo: f"tela_j{jogo}_t{turn:03d}.png" (várias partidas na mesma pasta)
+                cap.salvar_janela(sct_ref, pasta_ref, f"tela_t{turn:03d}.png", regioes_ref)
                 cap.salvar_regioes(pasta_ref, regioes_ref)
                 if not state.game_over and (turn - 1) % max(1, args.rajada_cada) == 0:
                     gravador = cap.Gravador(REF_RAJADA_S, janela_em=REF_JANELA_EM)
@@ -486,10 +498,16 @@ def main():
                             time.sleep(4)
 
                 turn = 0
-                jogo += 1
                 consecutive_fails = 0
                 bolas_prev = mais_prev = 0  # jogo novo: contador volta a 1
                 lt.log("\n  Recomecando do zero!\n")
+
+                # partida nova -> pasta nova (N+1)
+                pasta_anterior = pasta_log
+                lt.log(f"  a proxima partida vai para a proxima pasta logs/{prefixo_log}_N")
+                lt.fechar()
+                pasta_log, pasta_ref = abrir_partida()
+                lt.log(f"partida anterior: {pasta_anterior}")
                 continue
 
             if status:
@@ -518,7 +536,7 @@ def main():
                         rastro = lt.rastro_de_quadros(
                             state.raw_frame, gravador.quadros, gravador.tempos, gravador.eventos["disparo"]
                         )
-                        nome_rajada = f"rajada_j{jogo}_t{turn:03d}"
+                        nome_rajada = f"rajada_t{turn:03d}"  # antigo: rajada_j{jogo}_t{turn:03d}
                         gravador.salvar(pasta_ref, nome_rajada, regioes_ref)
                         cap.salvar_regioes(pasta_ref, regioes_ref)
                         lt.log(
