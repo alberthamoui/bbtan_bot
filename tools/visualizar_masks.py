@@ -656,17 +656,50 @@ def painels_ativos():
     return [p for p in _PAINEIS if JANELAS.get(p.chave, False)]
 
 
-def run_masks_window(stop_event=None):
+# Janelas de fora (ex: o jogo local com --local-janela). Desenhadas por este
+# mesmo loop porque o HighGUI do OpenCV não aguenta duas threads com imshow.
+_EXTRAS: list = []  # [titulo, construir() -> img, (x, y) do CONTEÚDO na tela ou None, (x, y) da borda, tentativas]
+
+
+def adicionar_janela(titulo: str, construir: Callable[[], Optional[np.ndarray]], posicao=None) -> None:
+    """Mostra construir() numa janela; com `posicao`, a imagem (sem a borda
+    do Windows) fica com o canto superior esquerdo nesse ponto da tela."""
+    _EXTRAS.append([titulo, construir, posicao, None, 0])
+
+
+def _mostrar_extras() -> None:
+    for extra in _EXTRAS:
+        titulo, construir, posicao, borda, tentativas = extra
+        img = construir()
+        if img is None:
+            continue
+        cv2.namedWindow(titulo, cv2.WINDOW_AUTOSIZE)
+        cv2.imshow(titulo, img)
+        if posicao is None or tentativas >= 20:
+            continue
+        # moveWindow põe a BORDA no ponto e o Windows demora uns quadros pra
+        # mover: a cada quadro confere onde a IMAGEM ficou e corrige a borda
+        x, y, _, _ = cv2.getWindowImageRect(titulo)
+        if (x, y) == tuple(posicao):
+            extra[4] = 20  # no lugar: para de mexer
+            continue
+        borda = posicao if borda is None else (borda[0] + posicao[0] - x, borda[1] + posicao[1] - y)
+        cv2.moveWindow(titulo, int(borda[0]), int(borda[1]))
+        extra[3], extra[4] = borda, tentativas + 1
+
+
+def run_masks_window(stop_event=None, so_extras: bool = False):
     """
     Loop das janelas de debug. Roda em thread daemon, iniciada por main.py.
-    Tecla 'q' (com foco numa das janelas) encerra.
+    Tecla 'q' (com foco numa das janelas) encerra. so_extras: só as janelas
+    de adicionar_janela (ex: o jogo local), sem os painéis de debug.
 
     Não sabe nada sobre o conteúdo dos painéis: percorre os que estão ligados,
     pede a imagem de cada um e mostra. Painel que devolve None é pulado — é
     assim que grid e hp ficam quietos até o primeiro scan chegar.
     """
-    ativos = painels_ativos()
-    if not ativos:
+    ativos = [] if so_extras else painels_ativos()
+    if not ativos and not _EXTRAS:
         return  # tudo desligado em JANELAS — nem abre a thread de desenho
 
     rw, rh = cfg.GAME_REGION[2], cfg.GAME_REGION[3]
@@ -683,13 +716,14 @@ def run_masks_window(stop_event=None):
                     continue  # painel sem nada a mostrar neste frame
                 cv2.namedWindow(painel.titulo, cv2.WINDOW_NORMAL)
                 cv2.imshow(painel.titulo, img)
+            _mostrar_extras()
 
             if (cv2.waitKey(_REFRESH_MS) & 0xFF) == ord("q"):
                 break
     finally:
-        for painel in _PAINEIS:  # fecha todas, inclusive as desligadas no meio
+        for titulo in [p.titulo for p in _PAINEIS] + [e[0] for e in _EXTRAS]:  # fecha todas
             try:
-                cv2.destroyWindow(painel.titulo)
+                cv2.destroyWindow(titulo)
             except cv2.error:
                 pass
 

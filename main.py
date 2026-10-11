@@ -14,6 +14,10 @@ Uso:
   python main.py --dry-run    -> Simula sem executar ações no mouse
   python main.py --referencia -> Joga e salva capturas limpas do jogo real
                                  (referência pra versão local do jogo)
+  python main.py --local      -> Joga a versão LOCAL do jogo (jogo_local/),
+                                 sem emulador e sem tela
+  python main.py --local-janela -> Igual, mostrando o jogo local numa janela
+                                 no lugar do emulador
 """
 
 import argparse
@@ -85,6 +89,29 @@ def parse_args():
         type=int,
         default=5,
         help="Com --referencia: grava a rodada a cada N turnos (padrao 5)",
+    )
+    parser.add_argument(
+        "--local",
+        action="store_true",
+        help="Joga a versao local do jogo (jogo_local/) em vez do emulador: a visao "
+        "le a tela desenhada na memoria e o mouse vira acao no jogo local. Sem "
+        "vies de mira. Logs em logs/local_N",
+    )
+    parser.add_argument(
+        "--local-janela",
+        action="store_true",
+        help="Como --local, mas mostra o jogo local numa janela onde fica o emulador",
+    )
+    parser.add_argument(
+        "--sem-janelas",
+        action="store_true",
+        help="Nao abre as janelas de debug (visualizar_masks.JANELAS) — pra rodar sem tela",
+    )
+    parser.add_argument(
+        "--semente",
+        type=int,
+        default=None,
+        help="Com --local: semente do sorteio (a mesma semente repete as fileiras)",
     )
     parser.add_argument(
         "--verbose-vision",
@@ -218,12 +245,36 @@ REF_ATRASO_ACELERAR = 1.5
 REF_JANELA_EM = 1.0
 
 
+def ligar_jogo_local(semente: Optional[int], janela: bool):
+    """
+    Troca o emulador pelo jogo local: daqui em diante toda captura e todo
+    mouse do bot (tela.py) vão pro jogo desenhado na memória, que roda no
+    relógio de verdade (50 ticks/s, 240 acelerado). O jogo local não tem o
+    viés de mira do emulador, então a compensação é zerada.
+    """
+    from jogo_local.backend import BackendLocal
+    from jogo_local.jogo import Jogo
+    from jogo_local.tempo_real import TempoReal
+
+    backend = BackendLocal()
+    motor = TempoReal(Jogo(semente=semente), backend).iniciar()
+    tela.usar(backend)
+    # antigo (só no emulador): a tabela medida do viés da mira
+    cfg.ANGLE_BIAS_TABELA = [(0, 0.0), (180, 0.0)]
+    if janela:
+        from tools.visualizar_masks import adicionar_janela
+
+        adicionar_janela("BBTAN local", backend.imagem, posicao=(backend.ox, backend.oy))
+    return motor
+
+
 def run_turn(
     state: GameState,
     debug: bool = False,
     dry_run: bool = False,
     turno: int = 0,
     gravador: Optional[cap.Gravador] = None,
+    local: bool = False,
 ):
     """
     Executa um turno completo a partir de um GameState já capturado.
@@ -294,7 +345,7 @@ def run_turn(
         # antigo: lt.log(f"  >> disparo executado em {best.angle:.0f} graus")
         lt.log(
             f"  >> disparo executado em {best.angle:.0f} graus "
-            f"(mirado {angulo_compensado(best.angle):.1f}, compensando o vies)"
+            + ("(jogo local, sem vies)" if local else f"(mirado {angulo_compensado(best.angle):.1f}, compensando o vies)")
             + (f" | gravando a rodada, acelerar apos {REF_ATRASO_ACELERAR:.1f}s" if gravador else "")
         )
         # (a captura do rastro real foi pro loop principal, logo depois daqui,
@@ -312,6 +363,10 @@ def run_turn(
 def main():
     args = parse_args()
     cfg.VISION_VERBOSE = args.verbose_vision
+    args.local = args.local or args.local_janela
+    if args.local and (args.referencia or args.animate):
+        sys.exit("--local nao combina com --referencia/--animate (as capturas de referencia sao do jogo REAL)")
+    motor_local = ligar_jogo_local(args.semente, args.local_janela) if args.local else None
 
     if args.animate:
         if args.delay > 0:
@@ -332,14 +387,18 @@ def main():
     print(f"  Angulos: {cfg.ANGLE_MIN}° a {cfg.ANGLE_MAX}° (step={cfg.ANGLE_STEP}°)")
     print(f"  Debug: {args.debug}  |  Dry-run: {args.dry_run}")
     print(f"  Smart-wait: {args.smart_wait}")
+    if motor_local is not None:
+        sem = "aleatoria" if args.semente is None else args.semente
+        print(f"  Jogo: LOCAL (semente {sem}){' | janela no lugar do emulador' if args.local_janela else ' | sem tela'}")
     print("=" * 50)
     print()
 
     masks_stop = threading.Event()
     masks_thread = threading.Thread(
-        target=run_masks_window, args=(masks_stop,), daemon=True
+        target=run_masks_window, args=(masks_stop, args.sem_janelas), daemon=True
     )
-    masks_thread.start()
+    if not args.sem_janelas or args.local_janela:
+        masks_thread.start()
 
     if args.dry_run:
         print("Modo dry-run: apenas visualização. Ctrl+C para sair.")
@@ -358,7 +417,7 @@ def main():
             cv2.destroyAllWindows()
         return
 
-    if args.delay > 0:
+    if args.delay > 0 and motor_local is None:
         print(f"Iniciando em {args.delay:.0f}s — posicione o jogo!")
         time.sleep(args.delay)
 
@@ -367,7 +426,8 @@ def main():
     # pra N+1 — antes tudo ia pra mesma pasta e as imagens turno_NNN_* da
     # partida nova sobrescreviam as da anterior (logs/bot_4).
     # antigo: lt.abrir() uma vez só, pra sessão inteira
-    prefixo_log = "captura_analise" if args.referencia else "bot"
+    # antigo: "captura_analise" if args.referencia else "bot"
+    prefixo_log = "captura_analise" if args.referencia else "local" if args.local else "bot"
     regioes_ref: dict = {}  # regiões das capturas da pasta atual (regioes.json)
     # antigo: sct_ref = mss.mss() — as capturas de referência passam pelo tela.py
 
@@ -379,6 +439,8 @@ def main():
             f"GAME_REGION {cfg.GAME_REGION} | ESCALA {cfg.ESCALA:.3f} | "
             f"angulos {cfg.ANGLE_MIN}-{cfg.ANGLE_MAX} | raio da bola {cfg.BALL_RADIUS}px"
         )
+        if motor_local is not None:
+            lt.log(f"JOGO LOCAL (jogo_local/), semente {args.semente}, partida {motor_local.jogo.partidas}, sem vies de mira")
         ref = None
         regioes_ref.clear()
         if args.referencia:
@@ -467,6 +529,7 @@ def main():
                 dry_run=args.dry_run,
                 turno=turn,
                 gravador=gravador,
+                local=args.local,
             )
 
             if status == "game_over":
@@ -478,12 +541,18 @@ def main():
 
                 from datetime import datetime
 
-                with open("historico.txt", "a", encoding="utf-8") as f:
+                # antigo: sempre historico.txt (o jogo local não mistura com o real)
+                with open("historico_local.txt" if args.local else "historico.txt", "a", encoding="utf-8") as f:
                     f.write(
                         f"{datetime.now():%Y-%m-%d %H:%M:%S} | Turnos: {turnos_sobrevividos} | Bolas: {state.detected_ball_count}\n"
                     )
 
-                if not args.dry_run:
+                if motor_local is not None:
+                    # jogo local: um clique começa a partida nova
+                    lt.log("  >> clique restart (jogo local)")
+                    tela.clicar(1576, 781)
+                    time.sleep(0.5)
+                elif not args.dry_run:
                     for i in range(3):
                         lt.log(f"  >> clique restart {i+1}/3...")
                         tela.clicar(1576, 781)  # antigo: pyautogui.click
@@ -559,7 +628,10 @@ def main():
 
     finally:
         masks_stop.set()
-        masks_thread.join(timeout=2)
+        if masks_thread.is_alive():
+            masks_thread.join(timeout=2)
+        if motor_local is not None:
+            motor_local.parar()
         if args.debug:
             cv2.destroyAllWindows()
 
