@@ -1,0 +1,196 @@
+{
+ "fonte": [
+  "logs/captura_analise_1/analise_rodadas.csv",
+  "logs/captura_analise_2/analise_rodadas.csv"
+ ],
+ "faixas": [
+  {
+   "de": 1,
+   "ate": 10,
+   "linhas": 20,
+   "n_blocos": {
+    "1": 10,
+    "2": 5,
+    "3": 3,
+    "4": 2
+   },
+   "tipos": {
+    "Q": 23,
+    "T": 14
+   },
+   "extras": {
+    "LH": 3,
+    "R": 1
+   },
+   "com_extra": 4
+  },
+  {
+   "de": 11,
+   "ate": 20,
+   "linhas": 10,
+   "n_blocos": {
+    "2": 5,
+    "3": 4,
+    "4": 1
+   },
+   "tipos": {
+    "Q": 23,
+    "T": 3
+   },
+   "extras": {
+    "R": 2
+   },
+   "com_extra": 2
+  },
+  {
+   "de": 21,
+   "ate": 30,
+   "linhas": 10,
+   "n_blocos": {
+    "2": 2,
+    "3": 7,
+    "4": 1
+   },
+   "tipos": {
+    "Q": 23,
+    "T": 3,
+    "div": 3
+   },
+   "extras": {
+    "LH": 2,
+    "LV": 1,
+    "R": 1
+   },
+   "com_extra": 4
+  },
+  {
+   "de": 31,
+   "ate": 40,
+   "linhas": 10,
+   "n_blocos": {
+    "1": 4,
+    "2": 1,
+    "3": 4,
+    "4": 1
+   },
+   "tipos": {
+    "T": 4,
+    "Q": 13,
+    "div": 1,
+    "verde": 2,
+    "2x2": 2
+   },
+   "extras": {
+    "LV": 3,
+    "LH": 1,
+    "R": 1
+   },
+   "com_extra": 5
+  },
+  {
+   "de": 41,
+   "ate": 50,
+   "linhas": 10,
+   "n_blocos": {
+    "1": 2,
+    "2": 3,
+    "3": 4,
+    "4": 1
+   },
+   "tipos": {
+    "div": 7,
+    "Q": 11,
+    "T": 2,
+    "verde": 2,
+    "2x2": 2
+   },
+   "extras": {
+    "LV": 1,
+    "LH": 1
+   },
+   "com_extra": 2
+  },
+  {
+   "de": 51,
+   "ate": 60,
+   "linhas": 10,
+   "n_blocos": {
+    "2": 3,
+    "3": 3,
+    "4": 3,
+    "5": 1
+   },
+   "tipos": {
+    "Q": 17,
+    "verde": 5,
+    "T": 3,
+    "2x2": 3,
+    "div": 2,
+    "cor": 2
+   },
+   "extras": {
+    "LH": 1,
+    "B": 1,
+    "LV": 1,
+    "R": 1
+   },
+   "com_extra": 4
+  },
+  {
+   "de": 61,
+   "ate": 70,
+   "linhas": 10,
+   "n_blocos": {
+    "1": 1,
+    "2": 1,
+    "3": 4,
+    "4": 3,
+    "5": 1
+   },
+   "tipos": {
+    "T": 6,
+    "div": 4,
+    "Q": 13,
+    "verde": 5,
+    "cor": 4
+   },
+   "extras": {
+    "R": 2,
+    "LH": 1
+   },
+   "com_extra": 3
+  },
+  {
+   "de": 71,
+   "ate": 80,
+   "linhas": 1,
+   "n_blocos": {
+    "3": 1
+   },
+   "tipos": {
+    "Q": 2,
+    "T": 1
+   },
+   "extras": {},
+   "com_extra": 0
+  }
+ ],
+ "orientacoes": {
+  "Ttr": 9,
+  "Ttl": 11,
+  "Tbr": 7,
+  "Tbl": 9
+ },
+ "primeira_rodada": {
+  "Q": 1,
+  "T": 1,
+  "pu LH": 1,
+  "pu R": 10,
+  "pu LV": 25,
+  "div": 26,
+  "verde": 37,
+  "2x2": 39,
+  "pu B": 53,
+  "cor": 58
+ }
+}

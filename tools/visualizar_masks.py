@@ -36,10 +36,9 @@ powerups     "Mask: Power-ups"
 bolas        "Mask: Contagem de bolas"
              Strip da BALL_COUNT_REGION + o número lido pelo OCR.
              É o painel MAIS CARO: roda template matching a cada frame.
-             Também é o único que toca o mss global de vision.py (via
-             read_ball_count_template), então é o que disputa captura de
-             tela com a thread principal. Desligar aqui elimina as duas
-             coisas.
+             (antigo: era também o único que disputava o mss global de
+             vision.py com a thread principal; agora toda captura passa pelo
+             tela.py, que usa uma instância por thread.)
 
 fim_rodada   "Mask: Fim de rodada"
              As 4 regiões rosa + status (n/4).
@@ -86,11 +85,11 @@ from pathlib import Path
 from typing import Callable, Optional
 
 import cv2
-import mss
 import numpy as np
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 import config as cfg
+import tela  # antigo: import mss (captura direta)
 
 # ═════════════════════════════════════════════════════════════════════════
 # LIGA / DESLIGA DAS JANELAS  ←── é aqui que você mexe
@@ -194,15 +193,14 @@ def _texto(img, texto, org, cor, escala=0.5):
 class _Ctx:
     """O que todo painel recebe pra se desenhar."""
 
-    sct: object  # instância mss PRÓPRIA desta thread (não a global de vision.py)
+    # antigo: sct (instância mss própria desta thread) — agora tela.capturar,
+    # que no backend real já usa uma instância por thread
     thumb_w: int
     thumb_h: int
 
     def grab(self, regiao) -> np.ndarray:
         """Captura uma região (x, y, w, h) da tela e devolve BGR."""
-        x, y, w, h = regiao
-        mon = {"top": y, "left": x, "width": w, "height": h}
-        return np.array(self.sct.grab(mon), dtype=np.uint8)[:, :, :3]
+        return tela.capturar_regiao(regiao)
 
     def grab_hsv(self, regiao):
         """Igual ao grab, mas já devolve (bgr, hsv)."""
@@ -234,9 +232,9 @@ def _painel_blocos(ctx: _Ctx) -> np.ndarray:
 
 def _painel_bolas(ctx: _Ctx) -> np.ndarray:
     """Strip da região de contagem + o número que o OCR leu."""
-    # Nota: read_ball_count_template() usa o mss GLOBAL de vision.py, que a
-    # thread principal também usa. É a única disputa de captura entre as duas
-    # threads — desligar o painel "bolas" em JANELAS elimina a disputa.
+    # antigo: read_ball_count_template() usava o mss GLOBAL de vision.py,
+    # disputado com a thread principal; agora captura pelo tela.py (uma
+    # instância de mss por thread).
     from vision import read_ball_count_template
 
     _, hsv = ctx.grab_hsv(cfg.BALL_COUNT_REGION)
@@ -658,22 +656,54 @@ def painels_ativos():
     return [p for p in _PAINEIS if JANELAS.get(p.chave, False)]
 
 
-def run_masks_window(stop_event=None):
+# Janelas de fora (ex: o jogo local com --local-janela). Desenhadas por este
+# mesmo loop porque o HighGUI do OpenCV não aguenta duas threads com imshow.
+_EXTRAS: list = []  # [titulo, construir() -> img, (x, y) do CONTEÚDO na tela ou None, (x, y) da borda, tentativas]
+
+
+def adicionar_janela(titulo: str, construir: Callable[[], Optional[np.ndarray]], posicao=None) -> None:
+    """Mostra construir() numa janela; com `posicao`, a imagem (sem a borda
+    do Windows) fica com o canto superior esquerdo nesse ponto da tela."""
+    _EXTRAS.append([titulo, construir, posicao, None, 0])
+
+
+def _mostrar_extras() -> None:
+    for extra in _EXTRAS:
+        titulo, construir, posicao, borda, tentativas = extra
+        img = construir()
+        if img is None:
+            continue
+        cv2.namedWindow(titulo, cv2.WINDOW_AUTOSIZE)
+        cv2.imshow(titulo, img)
+        if posicao is None or tentativas >= 20:
+            continue
+        # moveWindow põe a BORDA no ponto e o Windows demora uns quadros pra
+        # mover: a cada quadro confere onde a IMAGEM ficou e corrige a borda
+        x, y, _, _ = cv2.getWindowImageRect(titulo)
+        if (x, y) == tuple(posicao):
+            extra[4] = 20  # no lugar: para de mexer
+            continue
+        borda = posicao if borda is None else (borda[0] + posicao[0] - x, borda[1] + posicao[1] - y)
+        cv2.moveWindow(titulo, int(borda[0]), int(borda[1]))
+        extra[3], extra[4] = borda, tentativas + 1
+
+
+def run_masks_window(stop_event=None, so_extras: bool = False):
     """
     Loop das janelas de debug. Roda em thread daemon, iniciada por main.py.
-    Tecla 'q' (com foco numa das janelas) encerra.
+    Tecla 'q' (com foco numa das janelas) encerra. so_extras: só as janelas
+    de adicionar_janela (ex: o jogo local), sem os painéis de debug.
 
     Não sabe nada sobre o conteúdo dos painéis: percorre os que estão ligados,
     pede a imagem de cada um e mostra. Painel que devolve None é pulado — é
     assim que grid e hp ficam quietos até o primeiro scan chegar.
     """
-    ativos = painels_ativos()
-    if not ativos:
+    ativos = [] if so_extras else painels_ativos()
+    if not ativos and not _EXTRAS:
         return  # tudo desligado em JANELAS — nem abre a thread de desenho
 
     rw, rh = cfg.GAME_REGION[2], cfg.GAME_REGION[3]
     ctx = _Ctx(
-        sct=mss.mss(),  # instância própria: mss não é thread-safe
         thumb_w=int(rw * SCALE),
         thumb_h=int(rh * SCALE),
     )
@@ -686,13 +716,14 @@ def run_masks_window(stop_event=None):
                     continue  # painel sem nada a mostrar neste frame
                 cv2.namedWindow(painel.titulo, cv2.WINDOW_NORMAL)
                 cv2.imshow(painel.titulo, img)
+            _mostrar_extras()
 
             if (cv2.waitKey(_REFRESH_MS) & 0xFF) == ord("q"):
                 break
     finally:
-        for painel in _PAINEIS:  # fecha todas, inclusive as desligadas no meio
+        for titulo in [p.titulo for p in _PAINEIS] + [e[0] for e in _EXTRAS]:  # fecha todas
             try:
-                cv2.destroyWindow(painel.titulo)
+                cv2.destroyWindow(titulo)
             except cv2.error:
                 pass
 

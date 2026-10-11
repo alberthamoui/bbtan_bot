@@ -12,13 +12,14 @@ import time
 
 import cv2
 import numpy as np
-import mss
+# antigo: import mss — a captura passou pro tela.py
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import List, Optional, Tuple
 from pathlib import Path
 
 import config as cfg
+import tela
 
 # ─────────────────────────────────────────────
 # TIPOS DE DADOS
@@ -112,7 +113,8 @@ class GameState:
 # CAPTURA DE TELA
 # ─────────────────────────────────────────────
 
-_sct = mss.mss()  # instância global reutilizável
+# antigo: _sct = mss.mss() (instância global). Toda captura agora passa por
+# tela.capturar(), que o jogo local troca pela imagem que ele desenha.
 
 # ─────────────────────────────────────────────
 # TEMPLATES DE DÍGITOS (carregados uma vez)
@@ -388,7 +390,7 @@ def read_ball_count_template() -> int:
     """Captura BALL_COUNT_REGION e lê o contador (ler_contador)."""
     bx, by, bw, bh = cfg.BALL_COUNT_REGION
     mon = {"top": by, "left": bx, "width": bw, "height": bh}
-    img = np.array(_sct.grab(mon), dtype=np.uint8)[:, :, :3]
+    img = tela.capturar(mon)  # antigo: np.array(_sct.grab(mon), dtype=np.uint8)[:, :, :3]
     return ler_contador(img)
 
 
@@ -396,10 +398,8 @@ def capture_screen() -> np.ndarray:
     """Captura a região do jogo e retorna como array BGR (OpenCV)."""
     rx, ry, rw, rh = cfg.GAME_REGION
     monitor = {"top": ry, "left": rx, "width": rw, "height": rh}
-    raw = _sct.grab(monitor)
-    # mss retorna BGRA, converter para BGR
-    frame = np.array(raw, dtype=np.uint8)[:, :, :3]
-    return frame
+    # antigo: np.array(_sct.grab(monitor), dtype=np.uint8)[:, :, :3] (BGRA -> BGR)
+    return tela.capturar(monitor)
 
 
 def esperar_tabuleiro_parado(
@@ -1872,7 +1872,7 @@ def detect_round_end() -> bool:
     hits = 0
     for rx, ry, rw, rh in cfg.ROUND_END_REGIONS:
         mon = {"top": ry, "left": rx, "width": rw, "height": rh}
-        img = np.array(_sct.grab(mon), dtype=np.uint8)[:, :, :3]
+        img = tela.capturar(mon)  # antigo: _sct.grab
         hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
         mask = cv2.inRange(hsv, cfg.ROUND_END_HSV_LOW, cfg.ROUND_END_HSV_HIGH)
         if np.count_nonzero(mask) > mask.size * 0.1:
@@ -1887,7 +1887,7 @@ def detect_retrieve_button() -> bool:
     """
     rx, ry, rw, rh = cfg.RETRIEVE_BUTTON_REGION
     mon = {"top": ry, "left": rx, "width": rw, "height": rh}
-    img = np.array(_sct.grab(mon), dtype=np.uint8)[:, :, :3]
+    img = tela.capturar(mon)  # antigo: _sct.grab
     hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
     mask = cv2.inRange(hsv, cfg.RETRIEVE_HSV_LOW, cfg.RETRIEVE_HSV_HIGH)
     return np.count_nonzero(mask) >= mask.size * cfg.RETRIEVE_MIN_FILL

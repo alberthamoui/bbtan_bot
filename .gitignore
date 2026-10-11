@@ -18,6 +18,7 @@ __pycache__/
 
 # Arquivos gerados em runtime
 historico.txt
+historico_local.txt
 *.stackdump
 
 # Imagens temporarias / screenshots de debug
@@ -36,3 +37,6 @@ prints/
 
 # Logs de sessao do main.py (texto + imagens por turno)
 logs/
+
+# Capturas do jogo real (tools/capturar_jogo.py)
+capturas/

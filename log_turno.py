@@ -28,10 +28,11 @@ from pathlib import Path
 from typing import Optional
 
 import cv2
-import mss
+# antigo: import mss — a captura passou pro tela.py
 import numpy as np
 
 import config as cfg
+import tela
 from vision import detect_retrieve_button
 
 PASTA = Path(__file__).resolve().parent / "logs"
@@ -72,26 +73,30 @@ _BRANCO = (255, 255, 255)
 _AZUL = (255, 160, 0)
 
 
-def _proxima_pasta() -> Path:
+def _proxima_pasta(prefixo: str = "bot") -> Path:
     """
-    logs/bot_N/ com N = maior número já usado + 1 (bot_1 na primeira sessão).
-    Só conta pastas bot_<número>: nomes antigos como bot_20260929_173907 ficam
-    de fora da conta.
+    logs/<prefixo>_N/ com N = maior número já usado com esse prefixo + 1
+    (bot_1 na primeira sessão). Só conta pastas <prefixo>_<número>: nomes
+    antigos como bot_20260929_173907 ficam de fora da conta.
     """
+    # antigo: só "bot_" (prefixo fixo)
     usados = [
-        int(p.name[4:])
-        for p in PASTA.glob("bot_*")
-        if p.is_dir() and p.name[4:].isdigit()
+        int(p.name[len(prefixo) + 1 :])
+        for p in PASTA.glob(f"{prefixo}_*")
+        if p.is_dir() and p.name[len(prefixo) + 1 :].isdigit()
     ]
-    return PASTA / f"bot_{max(usados, default=0) + 1}"
+    return PASTA / f"{prefixo}_{max(usados, default=0) + 1}"
 
 
-def abrir() -> Path:
-    """Cria logs/bot_N/ (ver _proxima_pasta) e abre o sessao.log. Devolve a pasta."""
+def abrir(prefixo: str = "bot") -> Path:
+    """
+    Cria logs/<prefixo>_N/ (ver _proxima_pasta) e abre o sessao.log. Devolve a
+    pasta. O main usa "captura_analise" no modo --referencia e "bot" no normal.
+    """
     global _arquivo, _pasta_sessao
     # antigo: PASTA / f"bot_{datetime.now():%Y%m%d_%H%M%S}"
     PASTA.mkdir(exist_ok=True)
-    _pasta_sessao = _proxima_pasta()
+    _pasta_sessao = _proxima_pasta(prefixo)
     _pasta_sessao.mkdir()
     _arquivo = open(_pasta_sessao / "sessao.log", "a", encoding="utf-8")
     _arquivo.write(f"sessao iniciada em {datetime.now():%Y-%m-%d %H:%M:%S}\n")
@@ -390,22 +395,22 @@ def capturar_rastro(base_frame: np.ndarray, segundos: float = RASTRO_S) -> dict:
     visto = acabou = False
     proxima_checagem = 0.0
     t0 = time.perf_counter()
-    with mss.mss() as sct:
-        while time.perf_counter() - t0 < segundos:
-            frame = np.array(sct.grab(mon), dtype=np.uint8)[:, :, :3]
-            hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-            bola = cv2.inRange(hsv, cfg.BALL_HSV_LOW, cfg.BALL_HSV_HIGH)
-            bola[base > 0] = 0
-            novos = (bola > 0) & (primeiro < 0)
-            primeiro[novos] = len(tempos)
-            tempos.append(time.perf_counter() - t0)
-            if tempos[-1] >= proxima_checagem:
-                proxima_checagem = tempos[-1] + RETRIEVE_CHECK_S
-                if detect_retrieve_button():
-                    visto = True
-                elif visto:
-                    acabou = True
-                    break
+    # antigo: with mss.mss() as sct: ... np.array(sct.grab(mon))[:, :, :3]
+    while time.perf_counter() - t0 < segundos:
+        frame = tela.capturar(mon)
+        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+        bola = cv2.inRange(hsv, cfg.BALL_HSV_LOW, cfg.BALL_HSV_HIGH)
+        bola[base > 0] = 0
+        novos = (bola > 0) & (primeiro < 0)
+        primeiro[novos] = len(tempos)
+        tempos.append(time.perf_counter() - t0)
+        if tempos[-1] >= proxima_checagem:
+            proxima_checagem = tempos[-1] + RETRIEVE_CHECK_S
+            if detect_retrieve_button():
+                visto = True
+            elif visto:
+                acabou = True
+                break
     return {
         "primeiro": primeiro,
         "tempos": tempos,
@@ -413,6 +418,39 @@ def capturar_rastro(base_frame: np.ndarray, segundos: float = RASTRO_S) -> dict:
         "segundos": tempos[-1] if tempos else 0.0,
         "retrieve_visto": visto,
         "rodada_acabou": acabou,
+    }
+
+
+def rastro_de_quadros(base_frame: np.ndarray, quadros: list, tempos: list, desde: float = 0.0) -> dict:
+    """
+    O mesmo resultado de capturar_rastro, mas a partir de quadros já gravados
+    (rajada do modo --referencia, que grava o tabuleiro desde o disparo). Usa
+    só os quadros entre `desde` (instante do disparo) e `desde` + RASTRO_S,
+    pra medir igual aos outros turnos. A rajada não vigia o retrieve: a rodada
+    é dada como em andamento e o main espera o botão sumir normalmente.
+    """
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    base = cv2.inRange(cv2.cvtColor(base_frame, cv2.COLOR_BGR2HSV), cfg.BALL_HSV_LOW, cfg.BALL_HSV_HIGH)
+    base = cv2.dilate(base, kernel)
+    rh, rw = base.shape
+    primeiro = np.full((rh, rw), -1, dtype=np.int32)
+    usados = []
+    for frame, t in zip(quadros, tempos):
+        if t < desde:
+            continue
+        if t > desde + RASTRO_S:
+            break
+        bola = cv2.inRange(cv2.cvtColor(frame, cv2.COLOR_BGR2HSV), cfg.BALL_HSV_LOW, cfg.BALL_HSV_HIGH)
+        bola[base > 0] = 0
+        primeiro[(bola > 0) & (primeiro < 0)] = len(usados)
+        usados.append(t - desde)
+    return {
+        "primeiro": primeiro,
+        "tempos": usados,
+        "frames": len(usados),
+        "segundos": usados[-1] if usados else 0.0,
+        "retrieve_visto": True,
+        "rodada_acabou": False,
     }
 
 
@@ -511,8 +549,8 @@ def salvar_contador(turno: int, lido: int, usado: Optional[int] = None) -> None:
     conjunto rotulado pra refazer os templates dos dígitos no tamanho nativo.
     """
     bx, by, bw, bh = cfg.BALL_COUNT_REGION
-    with mss.mss() as sct:
-        img = np.array(sct.grab({"left": bx, "top": by, "width": bw, "height": bh}), dtype=np.uint8)[:, :, :3]
+    # antigo: mss.mss().grab(...)
+    img = tela.capturar({"left": bx, "top": by, "width": bw, "height": bh})
     img = cv2.resize(img, None, fx=3, fy=3, interpolation=cv2.INTER_NEAREST)
     img = cv2.copyMakeBorder(img, 0, 24, 0, 0, cv2.BORDER_CONSTANT, value=(0, 0, 0))
     rotulo = f"T{turno} OCR leu {lido}" + (f", usado {usado}" if usado is not None and usado != lido else "")

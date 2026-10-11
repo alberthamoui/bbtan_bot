@@ -85,3 +85,36 @@ por turno, a previsao (`turno_NNN_previsto.png`), o rastro real das bolas sobre 
 (`turno_NNN_real.png`) e o contador de bolas lido (`turno_NNN_contador.png`). O log mede
 o angulo real de cada tiro e, no turno seguinte, confere o tabuleiro previsto com o lido,
 apontando se cada diferenca veio da leitura ou da fisica.
+
+### Jogo local (sem emulador)
+
+`jogo_local/` e uma versao do BBTAN que roda na memoria, com aparencia, fisica e regras
+medidas no jogo real. O bot joga ela pelo mesmo codigo de visao e de mouse:
+
+```bash
+python main.py --local --sem-janelas          # sem nenhuma janela
+python main.py --local-janela                 # mostra o jogo onde fica o emulador
+python main.py --local --seed 7                # mesma seed = mesmas fileiras
+python main.py --rapido --seed 7 --partidas 1   # relogio virtual: nao espera o tempo real
+```
+
+Com `--rapido` as esperas do bot viram ticks do jogo na hora; o que sobra de tempo e a
+simulacao dos angulos do proprio bot. Mesma seed + mesmo bot = mesma partida, entao da
+pra comparar versoes do bot nas mesmas partidas, varias em paralelo:
+
+```bash
+python tools/partidas_locais.py --seeds 1-8 --nome antes
+```
+
+Resumo em `logs/partidas_locais/<nome>.csv` (rodada final, bolas e turnos de cada seed).
+
+O jogo local nao tem o vies de mira do emulador (a compensacao e zerada nesse modo).
+Logs em `logs/local_N/`; game over vai para `historico_local.txt`.
+
+Validacao contra o jogo real (capturas de `python main.py --referencia`):
+
+```bash
+python tools/validar_desenho_local.py   # a tela desenhada e lida igual a real?
+python tools/validar_fisica_local.py    # as bolas andam igual? (real x local x bot)
+python tools/validar_rodadas_local.py   # a rodada termina com o mesmo tabuleiro?
+```

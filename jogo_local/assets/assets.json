@@ -1,0 +1,88 @@
+{
+  "origem": "captura_analise_2",
+  "janela": {
+    "largura": 572,
+    "altura": 936,
+    "tabuleiro_x": 60,
+    "tabuleiro_y": 160
+  },
+  "cor_fundo_bgr": [
+    35,
+    29,
+    30
+  ],
+  "y_barra_rodada": 822,
+  "robo_offset": [
+    -20,
+    -80
+  ],
+  "bola_offset": [
+    -12,
+    -12
+  ],
+  "bola_amostras": 63,
+  "hp_vao": 3.0,
+  "hp_roxo_bgr": [
+    255,
+    0,
+    137
+  ],
+  "linha_centro_x": 225.5,
+  "linha_topo_y": -48.0,
+  "contador_offset": [
+    -12.0,
+    22.0
+  ],
+  "contador_vao": 2.0,
+  "glifos_hp": [
+    "0",
+    "1",
+    "2",
+    "3",
+    "4",
+    "5",
+    "6",
+    "7",
+    "8",
+    "9"
+  ],
+  "glifos_linha": [
+    "0",
+    "1",
+    "2",
+    "3",
+    "4",
+    "5",
+    "6",
+    "7",
+    "8",
+    "9"
+  ],
+  "glifos_contador": [
+    "0",
+    "1",
+    "2",
+    "3",
+    "4",
+    "5",
+    "6",
+    "7",
+    "8",
+    "9",
+    "x"
+  ],
+  "powerups": [
+    "aleatorio",
+    "laser_h",
+    "laser_v",
+    "mais",
+    "moeda"
+  ],
+  "icones": [
+    "corrente",
+    "divisor",
+    "divisor_cor"
+  ],
+  "icone_lado": 26,
+  "icone_fora": 3
+}
