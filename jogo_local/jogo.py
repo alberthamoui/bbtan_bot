@@ -102,11 +102,15 @@ class Rodada:
             self._recolher()
 
     def _celulas_livres(self):
-        """Células vazias onde já existe jogo (L1-L6), sem bola dentro."""
+        """Células vazias de L1 a L5, sem bola dentro. Nos logs do jogo real,
+        bloco que aparece do nada (filho de divisor) surge em L2-L6 DEPOIS de
+        descer (143 casos; 1 só em L7, provável erro de visão): nasce em L1-L5.
+        antigo: L1-L6 — o filho na L6 descia pra L7 e virava game over
+        (logs/local_s8_1, turnos 45-49)."""
         ocupadas = {c for b in self.est.blocos for c in celulas_de(b)}
         ocupadas |= {(p.coluna, p.fileira) for p in self.est.powerups}
         livres = []
-        for f in range(1, ULTIMA_FILEIRA):
+        for f in range(1, ULTIMA_FILEIRA - 1):
             for c in range(geo.COLUNAS):
                 if (c, f) in ocupadas:
                     continue
