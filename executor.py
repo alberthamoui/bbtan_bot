@@ -14,6 +14,7 @@ import time
 import pyautogui
 
 import config as cfg
+import tela
 
 # Segurança do PyAutoGUI
 pyautogui.FAILSAFE = True  # mova o mouse pro canto superior esquerdo pra abortar
@@ -88,22 +89,18 @@ def execute_shot_swipe(ball_x: float, ball_y: float, angle_deg: float):
     # antigo: angle_to_screen_coords(ball_x, ball_y, angle_deg) — sem compensar o viés
     sx, sy, tx, ty = angle_to_screen_coords(ball_x, ball_y, angulo_compensado(angle_deg))
 
-    # Move para a posição da bola
-    pyautogui.moveTo(int(sx), int(sy), duration=0.05)
+    # Move para a posição da bola (antigo: pyautogui.moveTo / pyautogui.drag
+    # direto; agora pelo tela.py, que o jogo local troca)
+    tela.mover(int(sx), int(sy), duracao=0.05)
     time.sleep(0.05)
 
     # Arrasta na direção do disparo
-    pyautogui.drag(
-        int(tx - sx),
-        int(ty - sy),
-        duration=cfg.DRAG_DURATION,
-        button="left",
-    )
+    tela.arrastar(int(tx - sx), int(ty - sy), duracao=cfg.DRAG_DURATION)
 
 
 def click_acelerar():
     """Clica no botão de acelerar, sem esperar (o modo --referencia controla o atraso)."""
-    pyautogui.click(cfg.SPEED_UP_X, cfg.SPEED_UP_Y)
+    tela.clicar(cfg.SPEED_UP_X, cfg.SPEED_UP_Y)  # antigo: pyautogui.click
 
 
 def speed_up_click():
@@ -116,7 +113,7 @@ def speed_up_click():
 def click_retrieve_button():
     """Clica no botão retrieve pra recolher as bolas e encerrar a rodada."""
     # antigo: centro de RETRIEVE_BUTTON_REGION (1577, 966)
-    pyautogui.click(*cfg.RETRIEVE_CLICK)
+    tela.clicar(*cfg.RETRIEVE_CLICK)  # antigo: pyautogui.click
 
 
 # Alias padrão — troque conforme o que funcionar no seu emulador

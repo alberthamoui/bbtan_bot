@@ -36,10 +36,9 @@ powerups     "Mask: Power-ups"
 bolas        "Mask: Contagem de bolas"
              Strip da BALL_COUNT_REGION + o número lido pelo OCR.
              É o painel MAIS CARO: roda template matching a cada frame.
-             Também é o único que toca o mss global de vision.py (via
-             read_ball_count_template), então é o que disputa captura de
-             tela com a thread principal. Desligar aqui elimina as duas
-             coisas.
+             (antigo: era também o único que disputava o mss global de
+             vision.py com a thread principal; agora toda captura passa pelo
+             tela.py, que usa uma instância por thread.)
 
 fim_rodada   "Mask: Fim de rodada"
              As 4 regiões rosa + status (n/4).
@@ -86,11 +85,11 @@ from pathlib import Path
 from typing import Callable, Optional
 
 import cv2
-import mss
 import numpy as np
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 import config as cfg
+import tela  # antigo: import mss (captura direta)
 
 # ═════════════════════════════════════════════════════════════════════════
 # LIGA / DESLIGA DAS JANELAS  ←── é aqui que você mexe
@@ -194,15 +193,14 @@ def _texto(img, texto, org, cor, escala=0.5):
 class _Ctx:
     """O que todo painel recebe pra se desenhar."""
 
-    sct: object  # instância mss PRÓPRIA desta thread (não a global de vision.py)
+    # antigo: sct (instância mss própria desta thread) — agora tela.capturar,
+    # que no backend real já usa uma instância por thread
     thumb_w: int
     thumb_h: int
 
     def grab(self, regiao) -> np.ndarray:
         """Captura uma região (x, y, w, h) da tela e devolve BGR."""
-        x, y, w, h = regiao
-        mon = {"top": y, "left": x, "width": w, "height": h}
-        return np.array(self.sct.grab(mon), dtype=np.uint8)[:, :, :3]
+        return tela.capturar_regiao(regiao)
 
     def grab_hsv(self, regiao):
         """Igual ao grab, mas já devolve (bgr, hsv)."""
@@ -234,9 +232,9 @@ def _painel_blocos(ctx: _Ctx) -> np.ndarray:
 
 def _painel_bolas(ctx: _Ctx) -> np.ndarray:
     """Strip da região de contagem + o número que o OCR leu."""
-    # Nota: read_ball_count_template() usa o mss GLOBAL de vision.py, que a
-    # thread principal também usa. É a única disputa de captura entre as duas
-    # threads — desligar o painel "bolas" em JANELAS elimina a disputa.
+    # antigo: read_ball_count_template() usava o mss GLOBAL de vision.py,
+    # disputado com a thread principal; agora captura pelo tela.py (uma
+    # instância de mss por thread).
     from vision import read_ball_count_template
 
     _, hsv = ctx.grab_hsv(cfg.BALL_COUNT_REGION)
@@ -673,7 +671,6 @@ def run_masks_window(stop_event=None):
 
     rw, rh = cfg.GAME_REGION[2], cfg.GAME_REGION[3]
     ctx = _Ctx(
-        sct=mss.mss(),  # instância própria: mss não é thread-safe
         thumb_w=int(rw * SCALE),
         thumb_h=int(rh * SCALE),
     )

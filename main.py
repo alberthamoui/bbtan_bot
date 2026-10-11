@@ -26,6 +26,7 @@ import cv2
 
 import config as cfg
 import log_turno as lt
+import tela
 import vision
 from vision import scan_game, detect_retrieve_button, GameState, PowerUpType
 from physics import find_best_angle
@@ -368,11 +369,7 @@ def main():
     # antigo: lt.abrir() uma vez só, pra sessão inteira
     prefixo_log = "captura_analise" if args.referencia else "bot"
     regioes_ref: dict = {}  # regiões das capturas da pasta atual (regioes.json)
-    sct_ref = None
-    if args.referencia:
-        import mss
-
-        sct_ref = mss.mss()
+    # antigo: sct_ref = mss.mss() — as capturas de referência passam pelo tela.py
 
     def abrir_partida():
         """Abre a pasta de log da partida (e a referencia/ dela). Devolve (pasta, pasta_ref)."""
@@ -459,7 +456,7 @@ def main():
             if pasta_ref is not None:
                 # janela inteira, limpa, antes do tiro (inclui a tela de game over)
                 # antigo: f"tela_j{jogo}_t{turn:03d}.png" (várias partidas na mesma pasta)
-                cap.salvar_janela(sct_ref, pasta_ref, f"tela_t{turn:03d}.png", regioes_ref)
+                cap.salvar_janela(pasta_ref, f"tela_t{turn:03d}.png", regioes_ref)
                 cap.salvar_regioes(pasta_ref, regioes_ref)
                 if not state.game_over and (turn - 1) % max(1, args.rajada_cada) == 0:
                     gravador = cap.Gravador(REF_RAJADA_S, janela_em=REF_JANELA_EM)
@@ -487,13 +484,11 @@ def main():
                     )
 
                 if not args.dry_run:
-                    import pyautogui
-
                     for i in range(3):
                         lt.log(f"  >> clique restart {i+1}/3...")
-                        pyautogui.click(1576, 781)
+                        tela.clicar(1576, 781)  # antigo: pyautogui.click
                         time.sleep(1)
-                        pyautogui.click(1584, 838)
+                        tela.clicar(1584, 838)
                         if i < 2:
                             time.sleep(4)
 

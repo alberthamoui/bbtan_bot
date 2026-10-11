@@ -48,10 +48,10 @@ from typing import Optional
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 import cv2
-import mss
 import numpy as np
 
 import config as cfg
+import tela as tela_mod  # antigo: import mss (captura direta)
 
 VK_F8, VK_F9, VK_F10 = 0x77, 0x78, 0x79
 
@@ -67,10 +67,10 @@ MARGEM_BAIXO = 776  # medido do topo do GAME_REGION
 PASTA_BASE = Path(__file__).resolve().parent.parent / "capturas"
 
 
-def regiao_janela(sct) -> dict:
+def regiao_janela() -> dict:
     """Retângulo da janela do jogo: GAME_REGION com margens, cortado aos limites dos monitores."""
     gx, gy, gw, _ = cfg.GAME_REGION
-    tela = sct.monitors[0]  # todos os monitores juntos
+    tela = tela_mod.monitores()  # todos os monitores juntos (antigo: sct.monitors[0])
     x0 = max(tela["left"], gx - cfg.px(MARGEM_X))
     y0 = max(tela["top"], gy - cfg.px(MARGEM_CIMA))
     x1 = min(tela["left"] + tela["width"], gx + gw + cfg.px(MARGEM_X))
@@ -83,14 +83,11 @@ def regiao_tabuleiro() -> dict:
     return {"left": gx, "top": gy, "width": gw, "height": gh}
 
 
-def _grab(sct, mon: dict) -> np.ndarray:
-    return np.array(sct.grab(mon), dtype=np.uint8)[:, :, :3]
-
-
-def salvar_janela(sct, pasta: Path, nome: str, regioes: dict) -> None:
+def salvar_janela(pasta: Path, nome: str, regioes: dict) -> None:
     """Salva a janela do jogo inteira em pasta/nome e anota a região em `regioes`."""
-    mon = regiao_janela(sct)
-    cv2.imwrite(str(pasta / nome), _grab(sct, mon))
+    # antigo: recebia o `sct` do mss; agora captura pelo tela.py (real ou jogo local)
+    mon = regiao_janela()
+    cv2.imwrite(str(pasta / nome), tela_mod.capturar(mon))
     regioes[nome] = mon
 
 
@@ -133,14 +130,15 @@ class Gravador:
 
     def _rodar(self) -> None:
         mon = regiao_tabuleiro()
-        with mss.mss() as sct:  # mss não pode ser compartilhado entre threads
-            while (t := time.perf_counter() - self._t0) < self.segundos:
-                self.quadros.append(_grab(sct, mon))
-                self.tempos.append(t)
-                if self.janela_em is not None and self.janela is None and t >= self.janela_em:
-                    self.janela_regiao = regiao_janela(sct)
-                    self.janela = _grab(sct, self.janela_regiao)
-                    self.eventos["foto_janela"] = round(time.perf_counter() - self._t0, 5)
+        # antigo: with mss.mss() as sct (uma instância por thread — o tela.py
+        # real já faz isso sozinho)
+        while (t := time.perf_counter() - self._t0) < self.segundos:
+            self.quadros.append(tela_mod.capturar(mon))
+            self.tempos.append(t)
+            if self.janela_em is not None and self.janela is None and t >= self.janela_em:
+                self.janela_regiao = regiao_janela()
+                self.janela = tela_mod.capturar(self.janela_regiao)
+                self.eventos["foto_janela"] = round(time.perf_counter() - self._t0, 5)
 
     def fps(self) -> float:
         return len(self.tempos) / max(self.tempos[-1], 1e-6) if self.tempos else 0.0
@@ -185,32 +183,31 @@ def main():
 
     estado: dict = {}
     n_tela = n_rajada = 0
-    with mss.mss() as sct:
-        # primeira leitura só zera as bordas (tecla já apertada não dispara)
-        for vk in (VK_F8, VK_F9, VK_F10):
-            _apertou(vk, estado)
-        try:
-            while True:
-                if _apertou(VK_F10, estado):
-                    break
-                if _apertou(VK_F8, estado):
-                    n_tela += 1
-                    nome = f"tela_{n_tela:03d}.png"
-                    salvar_janela(sct, pasta, nome, regioes)
-                    salvar_regioes(pasta, regioes)
-                    print(f"  [F8] {nome}")
-                if _apertou(VK_F9, estado):
-                    n_rajada += 1
-                    print(f"  [F9] gravando {args.segundos:.0f}s... dispare agora")
-                    g = Gravador(args.segundos)
-                    g.iniciar()
-                    g.esperar()
-                    sub = g.salvar(pasta, f"rajada_{n_rajada:03d}", regioes)
-                    salvar_regioes(pasta, regioes)
-                    print(f"  [F9] {sub.name}: {len(g.quadros)} quadros ({g.fps():.0f} fps)")
-                time.sleep(0.02)
-        except KeyboardInterrupt:
-            pass
+    # primeira leitura só zera as bordas (tecla já apertada não dispara)
+    for vk in (VK_F8, VK_F9, VK_F10):
+        _apertou(vk, estado)
+    try:
+        while True:
+            if _apertou(VK_F10, estado):
+                break
+            if _apertou(VK_F8, estado):
+                n_tela += 1
+                nome = f"tela_{n_tela:03d}.png"
+                salvar_janela(pasta, nome, regioes)
+                salvar_regioes(pasta, regioes)
+                print(f"  [F8] {nome}")
+            if _apertou(VK_F9, estado):
+                n_rajada += 1
+                print(f"  [F9] gravando {args.segundos:.0f}s... dispare agora")
+                g = Gravador(args.segundos)
+                g.iniciar()
+                g.esperar()
+                sub = g.salvar(pasta, f"rajada_{n_rajada:03d}", regioes)
+                salvar_regioes(pasta, regioes)
+                print(f"  [F9] {sub.name}: {len(g.quadros)} quadros ({g.fps():.0f} fps)")
+            time.sleep(0.02)
+    except KeyboardInterrupt:
+        pass
     salvar_regioes(pasta, regioes)
     print(f"\n{n_tela} capturas e {n_rajada} rajadas em {pasta}")
 

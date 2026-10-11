@@ -28,10 +28,11 @@ from pathlib import Path
 from typing import Optional
 
 import cv2
-import mss
+# antigo: import mss — a captura passou pro tela.py
 import numpy as np
 
 import config as cfg
+import tela
 from vision import detect_retrieve_button
 
 PASTA = Path(__file__).resolve().parent / "logs"
@@ -394,22 +395,22 @@ def capturar_rastro(base_frame: np.ndarray, segundos: float = RASTRO_S) -> dict:
     visto = acabou = False
     proxima_checagem = 0.0
     t0 = time.perf_counter()
-    with mss.mss() as sct:
-        while time.perf_counter() - t0 < segundos:
-            frame = np.array(sct.grab(mon), dtype=np.uint8)[:, :, :3]
-            hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-            bola = cv2.inRange(hsv, cfg.BALL_HSV_LOW, cfg.BALL_HSV_HIGH)
-            bola[base > 0] = 0
-            novos = (bola > 0) & (primeiro < 0)
-            primeiro[novos] = len(tempos)
-            tempos.append(time.perf_counter() - t0)
-            if tempos[-1] >= proxima_checagem:
-                proxima_checagem = tempos[-1] + RETRIEVE_CHECK_S
-                if detect_retrieve_button():
-                    visto = True
-                elif visto:
-                    acabou = True
-                    break
+    # antigo: with mss.mss() as sct: ... np.array(sct.grab(mon))[:, :, :3]
+    while time.perf_counter() - t0 < segundos:
+        frame = tela.capturar(mon)
+        hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+        bola = cv2.inRange(hsv, cfg.BALL_HSV_LOW, cfg.BALL_HSV_HIGH)
+        bola[base > 0] = 0
+        novos = (bola > 0) & (primeiro < 0)
+        primeiro[novos] = len(tempos)
+        tempos.append(time.perf_counter() - t0)
+        if tempos[-1] >= proxima_checagem:
+            proxima_checagem = tempos[-1] + RETRIEVE_CHECK_S
+            if detect_retrieve_button():
+                visto = True
+            elif visto:
+                acabou = True
+                break
     return {
         "primeiro": primeiro,
         "tempos": tempos,
@@ -548,8 +549,8 @@ def salvar_contador(turno: int, lido: int, usado: Optional[int] = None) -> None:
     conjunto rotulado pra refazer os templates dos dígitos no tamanho nativo.
     """
     bx, by, bw, bh = cfg.BALL_COUNT_REGION
-    with mss.mss() as sct:
-        img = np.array(sct.grab({"left": bx, "top": by, "width": bw, "height": bh}), dtype=np.uint8)[:, :, :3]
+    # antigo: mss.mss().grab(...)
+    img = tela.capturar({"left": bx, "top": by, "width": bw, "height": bh})
     img = cv2.resize(img, None, fx=3, fy=3, interpolation=cv2.INTER_NEAREST)
     img = cv2.copyMakeBorder(img, 0, 24, 0, 0, cv2.BORDER_CONSTANT, value=(0, 0, 0))
     rotulo = f"T{turno} OCR leu {lido}" + (f", usado {usado}" if usado is not None and usado != lido else "")
