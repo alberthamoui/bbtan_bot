@@ -14,12 +14,14 @@ config (contador, retrieve, fim de rodada...) caem no mesmo lugar. Fora da
 janela, devolve a cor de fundo.
 
 O mouse (mover/arrastar/clicar) é guardado em `eventos` com a posição na
-TELA; a lógica das rodadas (etapa 2) é quem vai consumir isso.
+TELA e repassado pro `ouvinte` (tempo_real.TempoReal), que vira ação no
+jogo. Como o pyautogui, mover/arrastar demoram a `duracao` pedida (com
+`esperar=False`, voltam na hora — pra rodar sem relógio).
 """
 
 import threading
 import time
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 import numpy as np
 
@@ -29,7 +31,7 @@ from jogo_local.estado import Estado
 
 
 class BackendLocal:
-    def __init__(self, estado: Optional[Estado] = None, desenhista: Optional[Desenhista] = None):
+    def __init__(self, estado: Optional[Estado] = None, desenhista: Optional[Desenhista] = None, esperar: bool = True):
         self.des = desenhista or Desenhista()
         self.ox = cfg.GAME_REGION[0] - self.des.bx  # canto da janela na tela
         self.oy = cfg.GAME_REGION[1] - self.des.by
@@ -38,6 +40,8 @@ class BackendLocal:
         self._estado = estado or Estado()
         self._imagem: Optional[np.ndarray] = None
         self.eventos: List[tuple] = []  # (instante, tipo, x, y[, dx, dy, duração])
+        self.ouvinte: Optional[Callable[[tuple], None]] = None
+        self.esperar = esperar
         self._mouse = (0, 0)
 
     # ── estado ──────────────────────────────────────────────────────────────
@@ -69,15 +73,25 @@ class BackendLocal:
     def monitores(self) -> dict:
         return {"left": self.ox, "top": self.oy, "width": self.largura, "height": self.altura}
 
+    def _evento(self, ev: tuple) -> None:
+        self.eventos.append(ev)
+        if self.ouvinte is not None:
+            self.ouvinte(ev)
+
     def mover(self, x: int, y: int, duracao: float = 0.0) -> None:
+        if self.esperar and duracao > 0:
+            time.sleep(duracao)
         self._mouse = (x, y)
-        self.eventos.append((time.perf_counter(), "mover", x, y))
+        self._evento((time.perf_counter(), "mover", x, y))
 
     def arrastar(self, dx: int, dy: int, duracao: float) -> None:
+        """O instante do evento é o do mouse SOLTO (fim do arrasto)."""
         x, y = self._mouse
-        self.eventos.append((time.perf_counter(), "arrastar", x, y, dx, dy, duracao))
+        if self.esperar and duracao > 0:
+            time.sleep(duracao)
         self._mouse = (x + dx, y + dy)
+        self._evento((time.perf_counter(), "arrastar", x, y, dx, dy, duracao))
 
     def clicar(self, x: int, y: int) -> None:
         self._mouse = (x, y)
-        self.eventos.append((time.perf_counter(), "clicar", x, y))
+        self._evento((time.perf_counter(), "clicar", x, y))

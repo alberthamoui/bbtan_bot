@@ -44,3 +44,4 @@ class Estado:
     bolas_voando: List[Tuple[float, float]] = field(default_factory=list)  # centros (px do tabuleiro)
     robo_x: Optional[float] = None  # onde o robô está (None = junto da bola parada)
     mostrar_robo: bool = True
+    game_over: bool = False  # tela de fim: um painel branco (a visão do bot procura >= 25% de branco)

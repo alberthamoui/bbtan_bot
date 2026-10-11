@@ -53,9 +53,19 @@ def ler_log(pasta: Path):
     return bolas, cont
 
 
-def estado_da_captura(tela: np.ndarray, t: int, bola_x: float, n_bolas: int, cor_real: bool) -> Estado:
+def estado_da_captura(tela: np.ndarray, t: int, bola_x: float, n_bolas: int, cor_real: bool,
+                      hp_exato: bool = False) -> Estado:
+    """Estado do jogo local que reproduz a captura. hp_exato: HP lido por
+    síntese com a fonte do jogo (tools/ler_hp_exato.py) em vez do OCR do bot."""
     board = tela[BY : BY + GH, BX : BX + GW]
     a = ac.analisar_tabuleiro(board, t)
+    if hp_exato:
+        import ler_hp_exato
+
+        for b in a["blocos"]:
+            if not b["tipo"].endswith("?"):
+                b["hp"] = ler_hp_exato.ler_hp(board, b["coluna"], b["fileira"], b["tipo"],
+                                              b["marcador"] == "divisor", maximo=3 * t + 5)
     blocos = []
     for b in a["blocos"]:
         if b["tipo"].endswith("?"):

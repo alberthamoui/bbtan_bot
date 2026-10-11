@@ -261,4 +261,9 @@ class Desenhista:
         ox, oy = self.m["bola_offset"]
         for x, y in est.bolas_voando:
             self._misturar(img, int(round(self.bx + x)) + ox, int(round(self.by + y)) + oy, cor, a)
+        if est.game_over:
+            # não imita a tela de fim do jogo real (o bot só olha se tem muito
+            # branco); qualquer clique começa outra partida
+            h, w = img.shape[:2]
+            img[int(h * 0.25) : int(h * 0.75), int(w * 0.08) : int(w * 0.92)] = 255
         return img
