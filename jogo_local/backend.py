@@ -42,6 +42,7 @@ class BackendLocal:
         self.eventos: List[tuple] = []  # (instante, tipo, x, y[, dx, dy, duração])
         self.ouvinte: Optional[Callable[[tuple], None]] = None
         self.esperar = esperar
+        self.relogio = None  # relogio.RelogioVirtual: cada captura custa um quadro de 60 fps
         self._mouse = (0, 0)
 
     # ── estado ──────────────────────────────────────────────────────────────
@@ -59,6 +60,10 @@ class BackendLocal:
 
     # ── interface do tela.py ────────────────────────────────────────────────
     def capturar(self, mon: dict) -> np.ndarray:
+        if self.relogio is not None:
+            from jogo_local.relogio import CUSTO_CAPTURA_S
+
+            self.relogio.avancar(CUSTO_CAPTURA_S)  # o tempo passa, depois a foto
         img = self.imagem()
         x, y = mon["left"] - self.ox, mon["top"] - self.oy
         w, h = mon["width"], mon["height"]

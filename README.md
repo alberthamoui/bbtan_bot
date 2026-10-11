@@ -95,7 +95,18 @@ medidas no jogo real. O bot joga ela pelo mesmo codigo de visao e de mouse:
 python main.py --local --sem-janelas          # sem nenhuma janela
 python main.py --local-janela                 # mostra o jogo onde fica o emulador
 python main.py --local --semente 7            # mesma semente = mesmas fileiras
+python main.py --rapido --semente 7 --partidas 1   # relogio virtual: nao espera o tempo real
 ```
+
+Com `--rapido` as esperas do bot viram ticks do jogo na hora; o que sobra de tempo e a
+simulacao dos angulos do proprio bot. Mesma semente + mesmo bot = mesma partida, entao da
+pra comparar versoes do bot nas mesmas partidas, varias em paralelo:
+
+```bash
+python tools/partidas_locais.py --sementes 1-8 --nome antes
+```
+
+Resumo em `logs/partidas_locais/<nome>.csv` (rodada final, bolas e turnos de cada semente).
 
 O jogo local nao tem o vies de mira do emulador (a compensacao e zerada nesse modo).
 Logs em `logs/local_N/`; game over vai para `historico_local.txt`.

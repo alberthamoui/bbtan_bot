@@ -18,7 +18,9 @@ Mouse (coordenadas de TELA, as mesmas do jogo real):
   - clicar no acelerar (com a rodada rolando) = 240 ticks/s depois de
     ATRASO_ACELERAR_S; clicar no Retrieve = recolhe as bolas;
   - clicar com a tela de fim = partida nova.
-Ritmo: 50 ticks/s (240 acelerado), como o jogo real.
+Ritmo: 50 ticks/s (240 acelerado), como o jogo real. Com um
+relogio.RelogioVirtual, não há thread: o jogo anda quando o relógio virtual
+anda (os sleeps do bot), e uma partida roda sem esperar o tempo real.
 """
 
 import math
@@ -37,7 +39,7 @@ RAIO_BOTAO_ACELERAR = 30
 
 
 class TempoReal:
-    def __init__(self, jogo: Jogo, backend: BackendLocal):
+    def __init__(self, jogo: Jogo, backend: BackendLocal, relogio=None):
         self.jogo = jogo
         self.backend = backend
         self._trava = threading.Lock()
@@ -46,13 +48,18 @@ class TempoReal:
         self._parar = threading.Event()
         self._thread: Optional[threading.Thread] = None
         self.tiros: List[Tuple[float, float]] = []  # (instante, ângulo) — pra conferir
+        self.relogio = relogio
+        self._proximo = relogio.agora() if relogio is not None else time.perf_counter()  # próximo tick
         backend.ouvinte = self._mouse
         backend.atualizar(jogo.tela())
+        if relogio is not None:
+            relogio.ouvintes.append(self._ate)
 
     # ── controle ────────────────────────────────────────────────────────────
     def iniciar(self) -> "TempoReal":
-        self._thread = threading.Thread(target=self._rodar, daemon=True)
-        self._thread.start()
+        if self.relogio is None:  # relógio virtual: quem anda é o relógio
+            self._thread = threading.Thread(target=self._rodar, daemon=True)
+            self._thread.start()
         return self
 
     def parar(self) -> None:
@@ -86,27 +93,41 @@ class TempoReal:
 
     # ── relógio ─────────────────────────────────────────────────────────────
     def _rodar(self) -> None:
-        proximo = time.perf_counter()
         while not self._parar.is_set():
-            agora = time.perf_counter()
-            mudou = False
-            with self._trava:
-                for item in sorted(a for a in self._agenda if a[0] <= agora):
-                    self._agenda.remove(item)
-                    mudou |= self._executar(item[1], item[2], agora)
-                if self.jogo.rodada is None:
-                    proximo = agora
-                else:
-                    periodo = 1.0 / (fis.TICKS_POR_S_ACELERADO if self._acelerado else fis.TICK_HZ)
-                    while proximo <= agora and self.jogo.rodada is not None:
-                        self.jogo.passo()
-                        proximo += periodo
-                        mudou = True
-                    if self.jogo.rodada is None:
-                        self._acelerado = False
-                if mudou:
-                    self.backend.atualizar(self.jogo.tela())
+            self._ate(time.perf_counter())
             time.sleep(0.002)
+
+    def _ate(self, agora: float) -> None:
+        """Leva o jogo até o instante `agora`: ticks e ações agendadas na
+        ordem certa (um acelerar no meio do intervalo vale dali em diante)."""
+        mudou = False
+        with self._trava:
+            while True:
+                pendentes = sorted(a for a in self._agenda if a[0] <= agora)
+                limite = pendentes[0][0] if pendentes else agora
+                mudou |= self._ticks_ate(limite)
+                if not pendentes:
+                    break
+                quando, acao, ang = pendentes[0]
+                self._agenda.remove(pendentes[0])
+                mudou |= self._executar(acao, ang, quando)
+            if mudou:
+                self.backend.atualizar(self.jogo.tela())
+
+    def _ticks_ate(self, t: float) -> bool:
+        if self.jogo.rodada is None:
+            self._proximo = t  # parado: o 1o tick da próxima rodada sai na hora do disparo
+            return False
+        periodo = 1.0 / (fis.TICKS_POR_S_ACELERADO if self._acelerado else fis.TICK_HZ)
+        andou = False
+        while self._proximo <= t and self.jogo.rodada is not None:
+            self.jogo.passo()
+            self._proximo += periodo
+            andou = True
+        if self.jogo.rodada is None:
+            self._acelerado = False
+            self._proximo = t
+        return andou
 
     def _executar(self, acao: str, ang: Optional[float], agora: float) -> bool:
         if acao == "disparo":

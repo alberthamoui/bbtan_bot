@@ -103,6 +103,18 @@ def parse_args():
         help="Como --local, mas mostra o jogo local numa janela onde fica o emulador",
     )
     parser.add_argument(
+        "--rapido",
+        action="store_true",
+        help="Com --local: relogio virtual, o bot nao espera o tempo real (as esperas "
+        "viram ticks do jogo na hora). Implica --local",
+    )
+    parser.add_argument(
+        "--partidas",
+        type=int,
+        default=0,
+        help="Para depois de N game overs (0 = continua pra sempre)",
+    )
+    parser.add_argument(
         "--sem-janelas",
         action="store_true",
         help="Nao abre as janelas de debug (visualizar_masks.JANELAS) — pra rodar sem tela",
@@ -245,19 +257,33 @@ REF_ATRASO_ACELERAR = 1.5
 REF_JANELA_EM = 1.0
 
 
-def ligar_jogo_local(semente: Optional[int], janela: bool):
+def ligar_jogo_local(semente: Optional[int], janela: bool, rapido: bool = False):
     """
     Troca o emulador pelo jogo local: daqui em diante toda captura e todo
     mouse do bot (tela.py) vão pro jogo desenhado na memória, que roda no
     relógio de verdade (50 ticks/s, 240 acelerado). O jogo local não tem o
     viés de mira do emulador, então a compensação é zerada.
+
+    rapido: relógio virtual (jogo_local/relogio.py) — os sleeps e esperas do
+    bot não esperam de verdade, o jogo anda o mesmo tanto na hora. Só a
+    simulação dos ângulos leva tempo real (e continua medida em tempo real).
     """
     from jogo_local.backend import BackendLocal
     from jogo_local.jogo import Jogo
     from jogo_local.tempo_real import TempoReal
 
     backend = BackendLocal()
-    motor = TempoReal(Jogo(semente=semente), backend).iniciar()
+    relogio = None
+    if rapido:
+        import executor
+        import jogo_local.backend as mod_backend
+        from jogo_local.relogio import RelogioVirtual
+
+        relogio = RelogioVirtual()
+        relogio.instalar(vision, executor, lt, mod_backend)
+        relogio.instalar(sys.modules[__name__], perf_counter=False)
+        backend.relogio = relogio
+    motor = TempoReal(Jogo(semente=semente), backend, relogio=relogio).iniciar()
     tela.usar(backend)
     # antigo (só no emulador): a tabela medida do viés da mira
     cfg.ANGLE_BIAS_TABELA = [(0, 0.0), (180, 0.0)]
@@ -363,10 +389,10 @@ def run_turn(
 def main():
     args = parse_args()
     cfg.VISION_VERBOSE = args.verbose_vision
-    args.local = args.local or args.local_janela
+    args.local = args.local or args.local_janela or args.rapido
     if args.local and (args.referencia or args.animate):
         sys.exit("--local nao combina com --referencia/--animate (as capturas de referencia sao do jogo REAL)")
-    motor_local = ligar_jogo_local(args.semente, args.local_janela) if args.local else None
+    motor_local = ligar_jogo_local(args.semente, args.local_janela, args.rapido) if args.local else None
 
     if args.animate:
         if args.delay > 0:
@@ -389,7 +415,8 @@ def main():
     print(f"  Smart-wait: {args.smart_wait}")
     if motor_local is not None:
         sem = "aleatoria" if args.semente is None else args.semente
-        print(f"  Jogo: LOCAL (semente {sem}){' | janela no lugar do emulador' if args.local_janela else ' | sem tela'}")
+        print(f"  Jogo: LOCAL (semente {sem}){' | janela no lugar do emulador' if args.local_janela else ' | sem tela'}"
+              f"{' | relogio virtual' if args.rapido else ''}")
     print("=" * 50)
     print()
 
@@ -428,6 +455,8 @@ def main():
     # antigo: lt.abrir() uma vez só, pra sessão inteira
     # antigo: "captura_analise" if args.referencia else "bot"
     prefixo_log = "captura_analise" if args.referencia else "local" if args.local else "bot"
+    if args.local and args.semente is not None:
+        prefixo_log = f"local_s{args.semente}"  # partidas em paralelo não brigam pela mesma pasta
     regioes_ref: dict = {}  # regiões das capturas da pasta atual (regioes.json)
     # antigo: sct_ref = mss.mss() — as capturas de referência passam pelo tela.py
 
@@ -440,7 +469,8 @@ def main():
             f"angulos {cfg.ANGLE_MIN}-{cfg.ANGLE_MAX} | raio da bola {cfg.BALL_RADIUS}px"
         )
         if motor_local is not None:
-            lt.log(f"JOGO LOCAL (jogo_local/), semente {args.semente}, partida {motor_local.jogo.partidas}, sem vies de mira")
+            lt.log(f"JOGO LOCAL (jogo_local/), semente {args.semente}, partida {motor_local.jogo.partidas}, sem vies de mira"
+                   + (", relogio virtual (tempos do log sao do jogo, nao do relogio de parede)" if args.rapido else ""))
         ref = None
         regioes_ref.clear()
         if args.referencia:
@@ -453,6 +483,7 @@ def main():
     pasta_log, pasta_ref = abrir_partida()
 
     turn = 0
+    partidas_feitas = 0
     consecutive_fails = 0
     max_fails = 5
     previsao = None  # SimResult do último tiro, conferido no scan seguinte
@@ -537,6 +568,11 @@ def main():
                 lt.log(f"\n{'='*50}")
                 lt.log(f"  GAME OVER — Score final apos {turnos_sobrevividos} turnos")
                 lt.log(f"  Bolas no ultimo turno: {state.detected_ball_count}")
+                if motor_local is not None:
+                    # o jogo local sabe a verdade (o contador some na tela de fim)
+                    j = motor_local.jogo
+                    lt.log(f"  RESULTADO LOCAL: semente {args.semente} | partida {j.partidas} | "
+                           f"rodada {j.est.rodada} | bolas {j.est.bolas} | turnos {turnos_sobrevividos}")
                 lt.log(f"{'='*50}")
 
                 from datetime import datetime
@@ -544,8 +580,16 @@ def main():
                 # antigo: sempre historico.txt (o jogo local não mistura com o real)
                 with open("historico_local.txt" if args.local else "historico.txt", "a", encoding="utf-8") as f:
                     f.write(
-                        f"{datetime.now():%Y-%m-%d %H:%M:%S} | Turnos: {turnos_sobrevividos} | Bolas: {state.detected_ball_count}\n"
+                        f"{datetime.now():%Y-%m-%d %H:%M:%S} | Turnos: {turnos_sobrevividos} | Bolas: {state.detected_ball_count}"
+                        + (f" | semente {args.semente} | rodada {motor_local.jogo.est.rodada} | bolas {motor_local.jogo.est.bolas}"
+                           if motor_local is not None else "")
+                        + "\n"
                     )
+
+                partidas_feitas += 1
+                if args.partidas and partidas_feitas >= args.partidas:
+                    lt.log(f"\n{partidas_feitas} partida(s) jogada(s) — parando (--partidas)")
+                    break
 
                 if motor_local is not None:
                     # jogo local: um clique começa a partida nova
