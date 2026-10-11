@@ -170,11 +170,14 @@ def analisar_tabuleiro(board: np.ndarray, rodada: int) -> dict:
             tipo = "2x2"
         else:
             tipo = f"{cols}x{fils}?"
+        fileira = int(round((y - TOPO_0) / PASSO))
+        if fileira > 7:  # abaixo da última fileira só há o robô (o neon dele virava "triângulo")
+            continue
         tri = tipo.startswith("T")
         hp, _ = v._read_hp(board, x, y, w, h, is_triangle=tri, is_2x2=tipo == "2x2")
         matiz = float(np.median(hsv[y : y + h, x : x + w, 0][mask]))
         blocos.append({
-            "fileira": int(round((y - TOPO_0) / PASSO)),
+            "fileira": fileira,
             "coluna": v._get_col_index(x + cfg.px(30)),
             "tipo": tipo, "hp": hp,
             "mult": round(hp / rodada, 2) if rodada > 0 and hp > 0 else None,
