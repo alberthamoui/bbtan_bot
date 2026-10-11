@@ -10,7 +10,7 @@ Bot que joga BBTAN sozinho num emulador Android no PC.
 
 ```mermaid
 flowchart LR
-    A["Captura de tela<br/>mss"] --> B["Visao<br/>vision.py"]
+    A["Captura de tela<br/>tela.py"] --> B["Visao<br/>vision.py"]
     B --> C["Simulacao<br/>physics.py"]
     C --> D["Disparo<br/>executor.py"]
     D --> E["Fim da rodada<br/>main.py"]
@@ -23,11 +23,14 @@ flowchart LR
 - **Simulacao:** testa cada angulo de disparo com reflexao em paredes, quadrados e
   triangulos. O score de cada angulo soma hits, blocos destruidos e power-ups, com
   peso maior para as fileiras mais baixas, que sao as mais perigosas.
-- **Disparo:** converte o melhor angulo num swipe no emulador (PyAutoGUI).
+- **Disparo:** converte o melhor angulo num swipe no emulador (PyAutoGUI), compensando o
+  desvio medido da mira do emulador.
 - **Fim da rodada:** espera o botao retrieve sumir da tela (se demorar demais, clica nele)
   e os blocos pararem de descer.
 
-As regioes da tela, cores e pesos do score ficam em `config.py`.
+As regioes da tela, cores e pesos do score ficam em `config.py`. Toda captura de tela e
+todo movimento do mouse passam pelo `tela.py`: no jogo real ele usa mss e PyAutoGUI; no
+[jogo local](#jogo-local-sem-emulador) ele fala com uma versao do BBTAN desenhada na memoria.
 
 ## Setup
 
@@ -74,47 +77,128 @@ emulador mudar de lugar, normalmente basta corrigir ele.
 ## Uso
 
 ```bash
-python main.py              # roda o bot
-python main.py --dry-run    # so visao (janelas de debug), sem simular nem clicar
+python main.py                  # joga no emulador ate voce parar
+python main.py --max-turns 10   # para depois de 10 turnos
+python main.py --dry-run        # so visao (janelas de debug), sem simular nem clicar
 ```
 
 Para parar: Ctrl+C, ou mova o mouse para o canto superior esquerdo da tela.
 
-Cada sessao grava em `logs/bot_N/` (bot_1, bot_2, ...) o log do terminal (`sessao.log`) e,
-por turno, a previsao (`turno_NNN_previsto.png`), o rastro real das bolas sobre ela
-(`turno_NNN_real.png`) e o contador de bolas lido (`turno_NNN_contador.png`). O log mede
-o angulo real de cada tiro e, no turno seguinte, confere o tabuleiro previsto com o lido,
-apontando se cada diferenca veio da leitura ou da fisica.
+| Opcao | O que faz |
+|---|---|
+| `--max-turns N` | para depois de N turnos |
+| `--partidas N` | para depois de N game overs (sem ela, recomeca sozinho pra sempre) |
+| `--sem-janelas` | nao abre as janelas de debug |
+| `--delay S` | espera S segundos antes de comecar (padrao 1) |
+| `--dry-run` | so le a tela e mostra o que viu, sem atirar |
+| `--referencia` | joga e salva capturas limpas do jogo real ([ver abaixo](#capturas-do-jogo-real)) |
+| `--local`, `--local-janela`, `--rapido`, `--seed N` | joga o [jogo local](#jogo-local-sem-emulador) |
 
-### Jogo local (sem emulador)
+As janelas de debug (grade de blocos, HP lido, trajetoria escolhida, leque de angulos...)
+se ligam e desligam no dicionario `JANELAS`, no topo de `tools/visualizar_masks.py`.
+
+### O que fica salvo
+
+Cada partida grava em `logs/bot_N/` (uma pasta nova a cada game over):
+
+- `sessao.log`: o log do terminal. Por turno: o tabuleiro lido, o angulo escolhido, o
+  angulo real de saida medido e, no turno seguinte, a conferencia do tabuleiro previsto
+  com o lido, dizendo se cada diferenca veio da leitura ou da fisica;
+- `turno_NNN_previsto.png`: a trajetoria prevista;
+- `turno_NNN_real.png`: o rastro real das bolas sobre a previsao;
+- `turno_NNN_contador.png`: o contador de bolas lido.
+
+Cada game over vira uma linha em `historico.txt`.
+
+## Jogo local (sem emulador)
 
 `jogo_local/` e uma versao do BBTAN que roda na memoria, com aparencia, fisica e regras
-medidas no jogo real. O bot joga ela pelo mesmo codigo de visao e de mouse:
+medidas no jogo real. O bot joga ela com o mesmo codigo de visao, simulacao e mouse; so o
+`tela.py` troca o emulador pelo jogo local. Serve pra testar mudancas no bot sem abrir o
+emulador e pra comparar versoes do bot com numeros.
 
 ```bash
-python main.py --local --sem-janelas          # sem nenhuma janela
-python main.py --local-janela                 # mostra o jogo onde fica o emulador
-python main.py --local --seed 7                # mesma seed = mesmas fileiras
-python main.py --rapido --seed 7 --partidas 1   # relogio virtual: nao espera o tempo real
+python main.py --local-janela --seed 7                   # assistir: janela no lugar do emulador
+python main.py --local --sem-janelas --max-turns 10      # sem nenhuma janela, tempo real
+python main.py --rapido --sem-janelas --seed 7 --partidas 1   # uma partida inteira, rapido
 ```
 
-Com `--rapido` as esperas do bot viram ticks do jogo na hora; o que sobra de tempo e a
-simulacao dos angulos do proprio bot. Mesma seed + mesmo bot = mesma partida, entao da
-pra comparar versoes do bot nas mesmas partidas, varias em paralelo:
+| Opcao | O que faz |
+|---|---|
+| `--local` | joga o jogo local em vez do emulador |
+| `--local-janela` | igual, mostrando o jogo numa janela exatamente onde fica o emulador |
+| `--rapido` | relogio virtual: as esperas do bot nao esperam de verdade (ja inclui `--local`) |
+| `--seed N` | fixa o sorteio das fileiras: a mesma seed sempre gera o mesmo jogo |
+
+- No jogo local a mira nao tem desvio, entao a compensacao do emulador fica desligada.
+- Com `--rapido`, o que sobra de tempo e a simulacao de angulos do proprio bot (uma
+  partida de 60 rodadas leva uns 8 min). Mesma seed + mesmo bot = mesma partida.
+- Logs em `logs/local_N/` (ou `logs/local_sN_M/` com `--seed N`). No fim aparece
+  `RESULTADO LOCAL: seed 7 | partida 1 | rodada 63 | ...`, e cada game over vai pra
+  `historico_local.txt` (separado do jogo real).
+
+### Comparar duas versoes do bot
+
+Rode as mesmas seeds antes e depois da mudanca, varias em paralelo (uma por nucleo):
 
 ```bash
 python tools/partidas_locais.py --seeds 1-8 --nome antes
+# ... muda o bot ...
+python tools/partidas_locais.py --seeds 1-8 --nome depois
 ```
 
-Resumo em `logs/partidas_locais/<nome>.csv` (rodada final, bolas e turnos de cada seed).
+Cada um mostra a rodada final de cada seed e a media, e salva em
+`logs/partidas_locais/<nome>.csv`.
 
-O jogo local nao tem o vies de mira do emulador (a compensacao e zerada nesse modo).
-Logs em `logs/local_N/`; game over vai para `historico_local.txt`.
+### O que o jogo local nao reproduz
 
-Validacao contra o jogo real (capturas de `python main.py --referencia`):
+- Os erros de leitura da tela real (OCR): uma melhoria de OCR tem que ser conferida no
+  emulador.
+- Rodadas longas: depois de muitas batidas pequenas diferencas se acumulam, entao o fim
+  de uma rodada longa nao sai identico ao do jogo real (o resultado medio, sim).
+- Algumas regras foram estimadas com poucos dados: o raio em que a bola pega um
+  power-up, a direcao sorteada pelo R e onde nascem os blocos do divisor.
+
+## Capturas do jogo real
+
+O jogo local foi montado e e validado a partir de capturas do jogo real:
+
+```bash
+python main.py --referencia                   # joga e grava a cada turno
+python main.py --referencia --rajada-cada 2   # grava a rodada inteira a cada 2 turnos (padrao 5)
+python tools/capturar_jogo.py                 # manual: F8 tela, F9 rajada de 4 s, F10 sai
+```
+
+Com `--referencia`, cada partida vai pra `logs/captura_analise_N/` e a subpasta
+`referencia/` guarda a janela inteira antes de cada tiro (`tela_tNNN.png`) e rajadas de
+60 fps das rodadas (`rajada_tNNN/`).
+
+Pra conferir o jogo local contra elas (real x local x physics.py do bot):
 
 ```bash
 python tools/validar_desenho_local.py   # a tela desenhada e lida igual a real?
-python tools/validar_fisica_local.py    # as bolas andam igual? (real x local x bot)
+python tools/validar_fisica_local.py    # as bolas andam igual ate o acelerar?
 python tools/validar_rodadas_local.py   # a rodada termina com o mesmo tabuleiro?
 ```
+
+Com capturas novas, da pra atualizar o que o jogo local sorteia e mede:
+
+```bash
+python tools/analisar_capturas.py logs/captura_analise_1 logs/captura_analise_2   # rodada, blocos e power-ups
+python tools/estatisticas_fileiras.py      # frequencias da fileira nova -> jogo_local/assets/fileiras.json
+python tools/medir_rajadas.py --rebotes    # velocidade, paredes e contato com os blocos
+```
+
+## Estrutura
+
+| Arquivo | Papel |
+|---|---|
+| `main.py` | loop principal e opcoes da linha de comando |
+| `config.py` | regioes da tela, cores, pesos do score |
+| `tela.py` | captura de tela e mouse (jogo real ou local) |
+| `vision.py` | leitura do tabuleiro |
+| `physics.py` | simulacao dos angulos |
+| `executor.py` | disparo (swipe), acelerar e retrieve |
+| `log_turno.py` | log e imagens de cada turno |
+| `jogo_local/` | o jogo local: `desenho.py` (tela), `fisica.py` e `jogo.py` (regras), `gerador.py` (fileiras novas), `tempo_real.py` e `relogio.py` (relogio), `backend.py` (ligacao com o `tela.py`) |
+| `tools/` | calibracao, capturas, validacao do jogo local e janelas de debug |
