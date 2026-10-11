@@ -17,7 +17,7 @@ simulação dos ângulos) — e isso o jogo real também espera parado.
     relogio.instalar(vision, executor, log_turno, jogo_local.backend)
     relogio.instalar(main, perf_counter=False)  # mede a simulação em tempo real
 
-Determinístico: mesma semente + mesmo bot = mesma partida.
+Determinístico: mesma seed + mesmo bot = mesma partida.
 """
 
 import time as _time

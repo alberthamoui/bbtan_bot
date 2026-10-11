@@ -120,10 +120,10 @@ def parse_args():
         help="Nao abre as janelas de debug (visualizar_masks.JANELAS) — pra rodar sem tela",
     )
     parser.add_argument(
-        "--semente",
+        "--seed",
         type=int,
         default=None,
-        help="Com --local: semente do sorteio (a mesma semente repete as fileiras)",
+        help="Com --local: seed do sorteio (a mesma seed repete as fileiras)",
     )
     parser.add_argument(
         "--verbose-vision",
@@ -257,7 +257,7 @@ REF_ATRASO_ACELERAR = 1.5
 REF_JANELA_EM = 1.0
 
 
-def ligar_jogo_local(semente: Optional[int], janela: bool, rapido: bool = False):
+def ligar_jogo_local(seed: Optional[int], janela: bool, rapido: bool = False):
     """
     Troca o emulador pelo jogo local: daqui em diante toda captura e todo
     mouse do bot (tela.py) vão pro jogo desenhado na memória, que roda no
@@ -283,7 +283,7 @@ def ligar_jogo_local(semente: Optional[int], janela: bool, rapido: bool = False)
         relogio.instalar(vision, executor, lt, mod_backend)
         relogio.instalar(sys.modules[__name__], perf_counter=False)
         backend.relogio = relogio
-    motor = TempoReal(Jogo(semente=semente), backend, relogio=relogio).iniciar()
+    motor = TempoReal(Jogo(seed=seed), backend, relogio=relogio).iniciar()
     tela.usar(backend)
     # antigo (só no emulador): a tabela medida do viés da mira
     cfg.ANGLE_BIAS_TABELA = [(0, 0.0), (180, 0.0)]
@@ -392,7 +392,7 @@ def main():
     args.local = args.local or args.local_janela or args.rapido
     if args.local and (args.referencia or args.animate):
         sys.exit("--local nao combina com --referencia/--animate (as capturas de referencia sao do jogo REAL)")
-    motor_local = ligar_jogo_local(args.semente, args.local_janela, args.rapido) if args.local else None
+    motor_local = ligar_jogo_local(args.seed, args.local_janela, args.rapido) if args.local else None
 
     if args.animate:
         if args.delay > 0:
@@ -414,8 +414,8 @@ def main():
     print(f"  Debug: {args.debug}  |  Dry-run: {args.dry_run}")
     print(f"  Smart-wait: {args.smart_wait}")
     if motor_local is not None:
-        sem = "aleatoria" if args.semente is None else args.semente
-        print(f"  Jogo: LOCAL (semente {sem}){' | janela no lugar do emulador' if args.local_janela else ' | sem tela'}"
+        sem = "aleatoria" if args.seed is None else args.seed
+        print(f"  Jogo: LOCAL (seed {sem}){' | janela no lugar do emulador' if args.local_janela else ' | sem tela'}"
               f"{' | relogio virtual' if args.rapido else ''}")
     print("=" * 50)
     print()
@@ -455,8 +455,8 @@ def main():
     # antigo: lt.abrir() uma vez só, pra sessão inteira
     # antigo: "captura_analise" if args.referencia else "bot"
     prefixo_log = "captura_analise" if args.referencia else "local" if args.local else "bot"
-    if args.local and args.semente is not None:
-        prefixo_log = f"local_s{args.semente}"  # partidas em paralelo não brigam pela mesma pasta
+    if args.local and args.seed is not None:
+        prefixo_log = f"local_s{args.seed}"  # partidas em paralelo não brigam pela mesma pasta
     regioes_ref: dict = {}  # regiões das capturas da pasta atual (regioes.json)
     # antigo: sct_ref = mss.mss() — as capturas de referência passam pelo tela.py
 
@@ -469,7 +469,7 @@ def main():
             f"angulos {cfg.ANGLE_MIN}-{cfg.ANGLE_MAX} | raio da bola {cfg.BALL_RADIUS}px"
         )
         if motor_local is not None:
-            lt.log(f"JOGO LOCAL (jogo_local/), semente {args.semente}, partida {motor_local.jogo.partidas}, sem vies de mira"
+            lt.log(f"JOGO LOCAL (jogo_local/), seed {args.seed}, partida {motor_local.jogo.partidas}, sem vies de mira"
                    + (", relogio virtual (tempos do log sao do jogo, nao do relogio de parede)" if args.rapido else ""))
         ref = None
         regioes_ref.clear()
@@ -571,7 +571,7 @@ def main():
                 if motor_local is not None:
                     # o jogo local sabe a verdade (o contador some na tela de fim)
                     j = motor_local.jogo
-                    lt.log(f"  RESULTADO LOCAL: semente {args.semente} | partida {j.partidas} | "
+                    lt.log(f"  RESULTADO LOCAL: seed {args.seed} | partida {j.partidas} | "
                            f"rodada {j.est.rodada} | bolas {j.est.bolas} | turnos {turnos_sobrevividos}")
                 lt.log(f"{'='*50}")
 
@@ -581,7 +581,7 @@ def main():
                 with open("historico_local.txt" if args.local else "historico.txt", "a", encoding="utf-8") as f:
                     f.write(
                         f"{datetime.now():%Y-%m-%d %H:%M:%S} | Turnos: {turnos_sobrevividos} | Bolas: {state.detected_ball_count}"
-                        + (f" | semente {args.semente} | rodada {motor_local.jogo.est.rodada} | bolas {motor_local.jogo.est.bolas}"
+                        + (f" | seed {args.seed} | rodada {motor_local.jogo.est.rodada} | bolas {motor_local.jogo.est.bolas}"
                            if motor_local is not None else "")
                         + "\n"
                     )

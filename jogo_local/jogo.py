@@ -233,8 +233,8 @@ class Jogo:
     chama passo() decide o ritmo (tempo_real.py faz 50 ou 240 por segundo).
     """
 
-    def __init__(self, semente: Optional[int] = None, gerador: Optional[Gerador] = None):
-        self.rng = random.Random(semente)
+    def __init__(self, seed: Optional[int] = None, gerador: Optional[Gerador] = None):
+        self.rng = random.Random(seed)
         self.gerador = gerador or Gerador(self.rng)
         self.rodada: Optional[Rodada] = None
         self.partidas = 0

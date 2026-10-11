@@ -8,7 +8,7 @@ o que o bot faz com o mouse vira ação no jogo e cada tick vira imagem nova.
     from jogo_local.tempo_real import TempoReal
 
     backend = BackendLocal()
-    TempoReal(Jogo(semente=1), backend).iniciar()
+    TempoReal(Jogo(seed=1), backend).iniciar()
     tela.usar(backend)   # daqui em diante o bot joga o jogo local
 
 Mouse (coordenadas de TELA, as mesmas do jogo real):
