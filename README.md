@@ -1,44 +1,61 @@
 # BBTAN Bot
 
-Bot que joga BBTAN sozinho num emulador Android no PC.
+Bot que joga BBTAN sozinho no PC: no jogo real (instalado pelo Google Play Games) ou numa
+copia do jogo que roda na memoria, sem precisar baixar nada.
 
-![Video de apresentacao do BBTAN Bot](docs/brag_en.gif)
+![Video de apresentacao do BBTAN Bot](docs/video.gif)
 
-![Bot jogando BBTAN](docs/demo.gif)
+## Como usar
 
-## Como funciona
-
-```mermaid
-flowchart LR
-    A["Captura de tela<br/>tela.py"] --> B["Visao<br/>vision.py"]
-    B --> C["Simulacao<br/>physics.py"]
-    C --> D["Disparo<br/>executor.py"]
-    D --> E["Fim da rodada<br/>main.py"]
-    E --> A
-```
-
-- **Visao:** isola os blocos por cor (HSV) e contornos, le o HP e o numero de bolas
-  por template matching e localiza a bola e os power-ups. Leituras incoerentes com o
-  turno anterior (numero de bolas que cai, HP que sobe, HP ilegivel) sao corrigidas.
-- **Simulacao:** testa cada angulo de disparo com reflexao em paredes, quadrados e
-  triangulos. O score de cada angulo soma hits, blocos destruidos e power-ups, com
-  peso maior para as fileiras mais baixas, que sao as mais perigosas.
-- **Disparo:** converte o melhor angulo num swipe no emulador (PyAutoGUI), compensando o
-  desvio medido da mira do emulador.
-- **Fim da rodada:** espera o botao retrieve sumir da tela (se demorar demais, clica nele)
-  e os blocos pararem de descer.
-
-As regioes da tela, cores e pesos do score ficam em `config.py`. Toda captura de tela e
-todo movimento do mouse passam pelo `tela.py`: no jogo real ele usa mss e PyAutoGUI; no
-[jogo local](#jogo-local-sem-emulador) ele fala com uma versao do BBTAN desenhada na memoria.
-
-## Setup
+### 1. Instalar
 
 ```bash
 pip install -r requirements.txt
 ```
 
-## Calibracao
+### 2. Jogar no jogo real
+
+Deixe o BBTAN aberto e visivel no Google Play Games, [calibre](#calibracao-jogo-real) a
+posicao do jogo uma vez e rode:
+
+```bash
+python main.py                  # joga ate voce parar
+python main.py --max-turns 10   # para depois de 10 turnos
+python main.py --dry-run        # so visao (janelas de debug), sem simular nem clicar
+```
+
+### 2b. Ou jogar no jogo local (sem baixar o jogo)
+
+Sem jogo instalado e sem calibrar: o bot joga uma copia do BBTAN que roda na memoria. E o
+jeito mais rapido e pratico de testar mudancas no bot ([detalhes](#jogo-local-sem-baixar-o-jogo)).
+
+```bash
+python main.py --local-janela --seed 7                        # assistir: janela no lugar do jogo
+python main.py --local --sem-janelas --max-turns 10           # sem nenhuma janela, tempo real
+python main.py --rapido --sem-janelas --seed 7 --partidas 1   # uma partida inteira, rapido
+```
+
+Para parar: Ctrl+C, ou mova o mouse para o canto superior esquerdo da tela.
+
+### Opcoes
+
+| Opcao | O que faz |
+|---|---|
+| `--max-turns N` | para depois de N turnos |
+| `--partidas N` | para depois de N game overs (sem ela, recomeca sozinho pra sempre) |
+| `--sem-janelas` | nao abre as janelas de debug |
+| `--delay S` | espera S segundos antes de comecar (padrao 1) |
+| `--dry-run` | so le a tela e mostra o que viu, sem atirar |
+| `--referencia` | joga e salva capturas limpas do jogo real ([ver abaixo](#capturas-do-jogo-real)) |
+| `--local` | joga o jogo local em vez do jogo real |
+| `--local-janela` | igual, mostrando o jogo numa janela exatamente onde fica o jogo real |
+| `--rapido` | relogio virtual: as esperas do bot nao esperam de verdade (ja inclui `--local`) |
+| `--seed N` | fixa o sorteio das fileiras do jogo local: a mesma seed sempre gera o mesmo jogo |
+
+As janelas de debug (grade de blocos, HP lido, trajetoria escolhida, leque de angulos...)
+se ligam e desligam no dicionario `JANELAS`, no topo de `tools/visualizar_masks.py`.
+
+## Calibracao (jogo real)
 
 O bot le a tela por posicao, entao o `config.py` precisa saber onde o jogo esta.
 Tudo e relativo ao `GAME_REGION` (o retangulo do tabuleiro): se a janela do
@@ -74,28 +91,31 @@ emulador mudar de lugar, normalmente basta corrigir ele.
 
    Onde nao bater, a legenda a direita diz qual variavel ajustar e com qual ferramenta.
 
-## Uso
+## Como funciona
 
-```bash
-python main.py                  # joga no emulador ate voce parar
-python main.py --max-turns 10   # para depois de 10 turnos
-python main.py --dry-run        # so visao (janelas de debug), sem simular nem clicar
+```mermaid
+flowchart LR
+    A["Captura de tela<br/>tela.py"] --> B["Visao<br/>vision.py"]
+    B --> C["Simulacao<br/>physics.py"]
+    C --> D["Disparo<br/>executor.py"]
+    D --> E["Fim da rodada<br/>main.py"]
+    E --> A
 ```
 
-Para parar: Ctrl+C, ou mova o mouse para o canto superior esquerdo da tela.
+- **Visao:** isola os blocos por cor (HSV) e contornos, le o HP e o numero de bolas
+  por template matching e localiza a bola e os power-ups. Leituras incoerentes com o
+  turno anterior (numero de bolas que cai, HP que sobe, HP ilegivel) sao corrigidas.
+- **Simulacao:** testa cada angulo de disparo com reflexao em paredes, quadrados e
+  triangulos. O score de cada angulo soma hits, blocos destruidos e power-ups, com
+  peso maior para as fileiras mais baixas, que sao as mais perigosas.
+- **Disparo:** converte o melhor angulo num swipe no emulador (PyAutoGUI), compensando o
+  desvio medido da mira do emulador.
+- **Fim da rodada:** espera o botao retrieve sumir da tela (se demorar demais, clica nele)
+  e os blocos pararem de descer.
 
-| Opcao | O que faz |
-|---|---|
-| `--max-turns N` | para depois de N turnos |
-| `--partidas N` | para depois de N game overs (sem ela, recomeca sozinho pra sempre) |
-| `--sem-janelas` | nao abre as janelas de debug |
-| `--delay S` | espera S segundos antes de comecar (padrao 1) |
-| `--dry-run` | so le a tela e mostra o que viu, sem atirar |
-| `--referencia` | joga e salva capturas limpas do jogo real ([ver abaixo](#capturas-do-jogo-real)) |
-| `--local`, `--local-janela`, `--rapido`, `--seed N` | joga o [jogo local](#jogo-local-sem-emulador) |
-
-As janelas de debug (grade de blocos, HP lido, trajetoria escolhida, leque de angulos...)
-se ligam e desligam no dicionario `JANELAS`, no topo de `tools/visualizar_masks.py`.
+As regioes da tela, cores e pesos do score ficam em `config.py`. Toda captura de tela e
+todo movimento do mouse passam pelo `tela.py`: no jogo real ele usa mss e PyAutoGUI; no
+[jogo local](#jogo-local-sem-baixar-o-jogo) ele fala com uma versao do BBTAN desenhada na memoria.
 
 ### O que fica salvo
 
@@ -110,25 +130,14 @@ Cada partida grava em `logs/bot_N/` (uma pasta nova a cada game over):
 
 Cada game over vira uma linha em `historico.txt`.
 
-## Jogo local (sem emulador)
+## Jogo local (sem baixar o jogo)
 
 `jogo_local/` e uma versao do BBTAN que roda na memoria, com aparencia, fisica e regras
 medidas no jogo real. O bot joga ela com o mesmo codigo de visao, simulacao e mouse; so o
 `tela.py` troca o emulador pelo jogo local. Serve pra testar mudancas no bot sem abrir o
 emulador e pra comparar versoes do bot com numeros.
 
-```bash
-python main.py --local-janela --seed 7                   # assistir: janela no lugar do emulador
-python main.py --local --sem-janelas --max-turns 10      # sem nenhuma janela, tempo real
-python main.py --rapido --sem-janelas --seed 7 --partidas 1   # uma partida inteira, rapido
-```
-
-| Opcao | O que faz |
-|---|---|
-| `--local` | joga o jogo local em vez do emulador |
-| `--local-janela` | igual, mostrando o jogo numa janela exatamente onde fica o emulador |
-| `--rapido` | relogio virtual: as esperas do bot nao esperam de verdade (ja inclui `--local`) |
-| `--seed N` | fixa o sorteio das fileiras: a mesma seed sempre gera o mesmo jogo |
+Como rodar e as opcoes estao em [Como usar](#2b-ou-jogar-no-jogo-local-sem-baixar-o-jogo).
 
 - No jogo local a mira nao tem desvio, entao a compensacao do emulador fica desligada.
 - Com `--rapido`, o que sobra de tempo e a simulacao de angulos do proprio bot (uma
